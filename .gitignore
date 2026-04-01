@@ -1,0 +1,21 @@
+# Base de datos y respaldos
+sistema_agua.db
+respaldos_seguridad/
+
+# Archivos de licencias y seguridad
+registro_licencias.txt
+
+# Configuración con datos sensibles
+config.py
+
+# Archivos y documentos generados por el sistema
+recibos_guardados/
+reportes_pdf/
+
+# Logs de errores
+errores.log
+
+# Caché de Python
+__pycache__/
+*.py[cod]
+*$py.class
