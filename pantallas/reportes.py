@@ -396,14 +396,19 @@ def crear_pantalla(parent_frame, get_usuario_rol, get_usuario_id=None):
 
             q = """
                 SELECT date(t.fecha_cobro), time(t.fecha_cobro),
-                       v.nombre, z.nombre, r.mes, r.anio,
+                       COALESCE(v.nombre, v2.nombre), COALESCE(z.nombre, z2.nombre),
+                       COALESCE(r.mes,  r2.mes),
+                       COALESCE(r.anio, r2.anio),
                        t.monto_cobrado, u.usuario
                 FROM transacciones t
-                LEFT JOIN recibos r    ON t.recibo_id  = r.id
-                LEFT JOIN cargos_extra ce ON t.cargo_id = ce.id
-                LEFT JOIN vecinos v    ON r.vecino_id = v.id
-                LEFT JOIN zonas  z    ON v.zona_id    = z.id
-                JOIN  usuarios u      ON t.usuario_id = u.id
+                LEFT JOIN recibos      r   ON t.recibo_id  = r.id
+                LEFT JOIN vecinos      v   ON r.vecino_id  = v.id
+                LEFT JOIN zonas        z   ON v.zona_id    = z.id
+                LEFT JOIN cargos_extra ce  ON t.cargo_id   = ce.id
+                LEFT JOIN recibos      r2  ON ce.recibo_id = r2.id
+                LEFT JOIN vecinos      v2  ON r2.vecino_id = v2.id
+                LEFT JOIN zonas        z2  ON v2.zona_id   = z2.id
+                JOIN  usuarios u           ON t.usuario_id = u.id
             """
             conditions = []
             params     = []

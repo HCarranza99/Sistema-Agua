@@ -105,9 +105,24 @@ def generar_pdf_recibo(
         pdf.cell(0, 8, _lat1("Detalle de pago:"), ln=True)
         pdf.set_font("Arial", "", 12)
         for item in meses_pagados:
-            mes_txt  = item.get("mes_anio", str(item))
+            mes_txt   = item.get("mes_anio", str(item)) if isinstance(item, dict) else str(item)
             monto_txt = f"${item.get('monto', 0):.2f}" if isinstance(item, dict) else ""
-            pdf.cell(0, 7, _lat1(f"   - Recibo de {mes_txt}  {monto_txt}"), ln=True)
+            es_parcial = isinstance(item, dict) and item.get("parcial", False)
+            if es_parcial:
+                monto_orig = item.get("monto_orig", 0)
+                linea = f"   - Recibo de {mes_txt}  {monto_txt}  (ABONO PARCIAL — saldo pendiente: ${monto_orig - item.get('monto',0):.2f})"
+            else:
+                linea = f"   - Recibo de {mes_txt}  {monto_txt}"
+            pdf.cell(0, 7, _lat1(linea), ln=True)
+
+        # Nota si hay pagos parciales
+        hay_parciales = any(isinstance(i, dict) and i.get("parcial") for i in meses_pagados)
+        if hay_parciales:
+            pdf.ln(2)
+            pdf.set_font("Arial", "I", 10)
+            pdf.set_text_color(180, 50, 50)
+            pdf.cell(0, 7, _lat1("(*) Pago parcial: el saldo restante permanece pendiente."), ln=True)
+            pdf.set_text_color(0, 0, 0)
 
         # Cargos extra
         if cargos_extra:

@@ -214,7 +214,7 @@ def crear_pantalla(parent_frame, get_usuario_actual_id, get_usuario_actual_rol):
 
     def recalcular_total():
         total_cuotas = sum(
-            item["monto"] for item in estado["checkboxes"]
+            item.get("monto_a_pagar", item["monto"]) for item in estado["checkboxes"]
             if item["var"].get() == 1
         )
         total_cargos = sum(
@@ -392,9 +392,34 @@ def crear_pantalla(parent_frame, get_usuario_actual_id, get_usuario_actual_rol):
             chk = ctk.CTkCheckBox(fila, text="", variable=var, width=24,
                                    command=recalcular_total)
             chk.pack(side="left", padx=8)
+
+            # Campo de monto editable (pago parcial)
+            var_monto_str = ctk.StringVar(value=f"{monto:.2f}")
+            entry_parcial = ctk.CTkEntry(
+                fila, textvariable=var_monto_str,
+                width=70, height=28, corner_radius=6,
+                fg_color=COLOR_FONDO, border_color=COLOR_BORDE,
+                font=FONT_SMALL, justify="right")
+            entry_parcial.pack(side="left", padx=(0, 4))
+
+            def _on_monto_change(name, index, mode, _r_id=r_id, _sv=var_monto_str, _orig=monto):
+                try:
+                    val = float(_sv.get().replace(",", "."))
+                    val = max(0.01, min(val, _orig))
+                except ValueError:
+                    val = _orig
+                for cb in estado["checkboxes"]:
+                    if cb["id"] == _r_id:
+                        cb["monto_a_pagar"] = val
+                        break
+                recalcular_total()
+
+            var_monto_str.trace_add("write", _on_monto_change)
+
             estado["checkboxes"].append({
-                "id": r_id, "monto": monto, "var": var,
-                "mes_anio": f"{mes} {anio}"
+                "id": r_id, "monto": monto, "monto_a_pagar": monto,
+                "var": var, "mes_anio": f"{mes} {anio}",
+                "entry_monto": var_monto_str
             })
 
             # Botones de cargos extra
@@ -420,6 +445,40 @@ def crear_pantalla(parent_frame, get_usuario_actual_id, get_usuario_actual_rol):
                     abrir_form_cargo(rid, "consumo", m, a)
             ).pack(side="left", padx=2)
 
+        elif epago == "Parcial":
+            badge(fila, "Parcial", COLOR_BADGE_AMBER_BG,
+                  COLOR_BADGE_AMBER_TEXT).pack(side="left")
+            # Permitir pagar el saldo restante
+            var = ctk.IntVar(value=1)
+            chk = ctk.CTkCheckBox(fila, text="", variable=var, width=24,
+                                   command=recalcular_total)
+            chk.pack(side="left", padx=8)
+            var_monto_str = ctk.StringVar(value=f"{monto:.2f}")
+            entry_parcial = ctk.CTkEntry(
+                fila, textvariable=var_monto_str,
+                width=70, height=28, corner_radius=6,
+                fg_color=COLOR_FONDO, border_color=COLOR_BORDE,
+                font=FONT_SMALL, justify="right")
+            entry_parcial.pack(side="left", padx=(0, 4))
+
+            def _on_monto_change_p(name, index, mode, _r_id=r_id, _sv=var_monto_str, _orig=monto):
+                try:
+                    val = float(_sv.get().replace(",", "."))
+                    val = max(0.01, min(val, _orig))
+                except ValueError:
+                    val = _orig
+                for cb in estado["checkboxes"]:
+                    if cb["id"] == _r_id:
+                        cb["monto_a_pagar"] = val
+                        break
+                recalcular_total()
+
+            var_monto_str.trace_add("write", _on_monto_change_p)
+            estado["checkboxes"].append({
+                "id": r_id, "monto": monto, "monto_a_pagar": monto,
+                "var": var, "mes_anio": f"{mes} {anio} (saldo)",
+                "entry_monto": var_monto_str
+            })
         else:
             badge(fila, "Pagado", COLOR_BADGE_VERDE_BG,
                   COLOR_BADGE_VERDE_TEXT).pack(side="left")
@@ -579,18 +638,35 @@ def crear_pantalla(parent_frame, get_usuario_actual_id, get_usuario_actual_rol):
 
             # Registrar pagos de cuotas
             for item in a_pagar:
-                cur.execute(
-                    "UPDATE recibos SET estado_pago='Pagado' WHERE id=?",
-                    (item["id"],))
+                monto_item    = item.get("monto_a_pagar", item["monto"])
+                es_parcial    = monto_item < item["monto"] - 0.001
+                nuevo_estado_recibo = "Parcial" if es_parcial else "Pagado"
+
+                # Si es parcial: reducir el monto pendiente del recibo en vez de
+                # marcarlo Pagado. Si ya queda en $0 por redondeo, se marca Pagado.
+                if es_parcial:
+                    saldo_restante = round(item["monto"] - monto_item, 2)
+                    if saldo_restante <= 0:
+                        nuevo_estado_recibo = "Pagado"
+                    cur.execute(
+                        "UPDATE recibos SET estado_pago=?, monto=? WHERE id=?",
+                        (nuevo_estado_recibo, saldo_restante, item["id"]))
+                else:
+                    cur.execute(
+                        "UPDATE recibos SET estado_pago='Pagado' WHERE id=?",
+                        (item["id"],))
+
                 cur.execute(
                     "INSERT INTO transacciones "
                     "(recibo_id, usuario_id, monto_cobrado, fecha_cobro) "
                     "VALUES (?,?,?,?)",
-                    (item["id"], usuario_id, item["monto"], fecha_local))
-                total_pagado += item["monto"]
+                    (item["id"], usuario_id, monto_item, fecha_local))
+                total_pagado += monto_item
                 items_pagados.append({
-                    "mes_anio": item["mes_anio"],
-                    "monto":    item["monto"]
+                    "mes_anio":   item["mes_anio"],
+                    "monto":      monto_item,
+                    "monto_orig": item["monto"],
+                    "parcial":    es_parcial and nuevo_estado_recibo == "Parcial"
                 })
 
             # Registrar cargos extra
@@ -614,7 +690,7 @@ def crear_pantalla(parent_frame, get_usuario_actual_id, get_usuario_actual_rol):
             # Actualizar estado del vecino
             cur.execute(
                 "SELECT COUNT(*) FROM recibos "
-                "WHERE vecino_id=? AND estado_pago='Pendiente'", (v_id,))
+                "WHERE vecino_id=? AND estado_pago IN ('Pendiente','Parcial')", (v_id,))
             pendientes = cur.fetchone()[0]
             nuevo_estado = "Solvente" if pendientes == 0 else "En Deuda"
             cur.execute("UPDATE vecinos SET estado=? WHERE id=?",
