@@ -127,6 +127,8 @@ def crear_pantalla(parent_frame, ventana_principal):
             resultados.append(f"Integridad: {cur.fetchone()[0]}")
             cur.execute("SELECT COUNT(*) FROM vecinos WHERE activo=1")
             resultados.append(f"Vecinos activos: {cur.fetchone()[0]}")
+            cur.execute("SELECT COUNT(*) FROM vecinos WHERE tipo_cobro='medidor' AND activo=1")
+            resultados.append(f"  └ Con medidor: {cur.fetchone()[0]}")
             cur.execute("SELECT COUNT(*) FROM recibos WHERE estado_pago='Pendiente'")
             resultados.append(f"Recibos pendientes: {cur.fetchone()[0]}")
             cur.execute("SELECT COUNT(*) FROM transacciones")
@@ -137,6 +139,30 @@ def crear_pantalla(parent_frame, ventana_principal):
             resultados.append(f"Usuarios: {cur.fetchone()[0]}")
             cur.execute("SELECT COUNT(*) FROM zonas WHERE activa=1")
             resultados.append(f"Zonas activas: {cur.fetchone()[0]}")
+            # Tablas nuevas
+            cur.execute("SELECT COUNT(*) FROM lecturas_medidor")
+            resultados.append(f"Lecturas registradas: {cur.fetchone()[0]}")
+            cur.execute("SELECT COUNT(*) FROM tarifas_excedente")
+            resultados.append(f"Rangos de excedente: {cur.fetchone()[0]}")
+            # Lecturas faltantes mes actual
+            import datetime as _dt
+            from config import MESES_ES as _ME
+            hoy_ = _dt.date.today()
+            mes_ = _ME[hoy_.month]
+            anio_ = hoy_.year
+            cur.execute("""
+                SELECT COUNT(*) FROM vecinos v
+                WHERE v.activo=1 AND v.tipo_cobro='medidor'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM lecturas_medidor lm
+                    WHERE lm.vecino_id=v.id AND lm.mes=? AND lm.anio=?
+                  )
+            """, (mes_, anio_))
+            faltantes = cur.fetchone()[0]
+            if faltantes > 0:
+                resultados.append(f"⚠ Sin lectura este mes: {faltantes}")
+            else:
+                resultados.append(f"✓ Lecturas al día")
             lbl_diag.configure(text="\n".join(resultados), text_color=COLOR_TEXTO)
         except Exception as e:
             lbl_diag.configure(text=f"Error: {e}", text_color=COLOR_ROJO)

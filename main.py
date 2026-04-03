@@ -164,6 +164,10 @@ def cargar_pantallas():
         lambda: sesion["usuario_rol"],
         lambda: sesion["usuario_id"])
 
+    frames_pantallas["lecturas"] = p_reportes.crear_pantalla_lecturas(
+        contenido_pantallas,
+        lambda: sesion["usuario_rol"])
+
     frames_pantallas["envio_recibos"] = p_envio.crear_pantalla(
         contenido_pantallas,
         lambda: sesion["usuario_id"],
@@ -218,6 +222,7 @@ def construir_nav():
     _nav_btn("cobros",         "🏠", "Registro de Pagos")
     _nav_btn("envio_recibos",  "📨", "Envío de Recibos")
     _nav_btn("reportes",       "📊", "Reportes")
+    _nav_btn("lecturas",       "🔢", "Lecturas del Período")
 
     # Gestión — Presidente y superiores
     if puede_gestionar_vecinos(rol):

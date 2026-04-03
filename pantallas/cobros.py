@@ -733,6 +733,21 @@ def crear_pantalla(parent_frame, get_usuario_actual_id, get_usuario_actual_rol):
                 nombre_vecino, items_pagados, total_pagado, cajero, numero_recibo)
             wp.abrir_whatsapp(telefono, mensaje_wa)
             mensajes_resultado.append("WhatsApp abierto.")
+            # Abrir la carpeta donde quedó el PDF para adjuntarlo fácilmente
+            if pdf_path:
+                import os, platform, subprocess
+                carpeta_pdf = os.path.dirname(pdf_path)
+                try:
+                    if platform.system() == "Windows":
+                        # /select resalta el archivo específico en el Explorador
+                        subprocess.Popen(["explorer", f"/select,{pdf_path}"])
+                    elif platform.system() == "Darwin":
+                        subprocess.Popen(["open", "-R", pdf_path])
+                    else:
+                        subprocess.Popen(["xdg-open", carpeta_pdf])
+                    mensajes_resultado.append("Carpeta del PDF abierta para adjuntarlo.")
+                except Exception:
+                    mensajes_resultado.append(f"PDF guardado en: {carpeta_pdf}")
 
         if var_email.get() and email_vecino:
             comunidad = obtener_config("nombre_comunidad", "ADESCO")

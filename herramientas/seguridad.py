@@ -136,9 +136,9 @@ def generar_password_soporte(hardware_id: str) -> str:
 
 # =============================================================================
 # LICENCIAS - HMAC-SHA256
-# Formato de clave: ADESCO-YYYYMM-AAAAA-BBBBB-CCCCC
-#   YYYYMM  : mes de expiracion embebido directamente en la clave
-#   AAAAA-BBBBB-CCCCC : 15 chars HMAC-SHA256(secret, "hw_id|YYYY-MM")
+# Formato de clave: ADESCO-YYYYMMDD-AAAAA-BBBBB-CCCCC
+#   YYYYMMDD : fecha exacta de expiración embebida en la clave
+#   AAAAA-BBBBB-CCCCC : 15 chars HMAC-SHA256(secret, "hw_id|YYYY-MM-DD")
 # =============================================================================
 
 # Esta clave secreta NUNCA debe cambiar entre versiones ni compartirse.
@@ -153,17 +153,17 @@ def generar_clave_licencia(hardware_id: str, fecha_expiracion: str) -> str:
         hardware_id: ID del hardware de la PC destino (32 chars hex).
                      Usar "*" para una clave de activacion inicial
                      que se vincula al hardware la primera vez que se usa.
-        fecha_expiracion: Formato YYYY-MM (ej: "2026-04")
+        fecha_expiracion: Formato YYYY-MM-DD (ej: "2026-04-03")
 
     Returns:
-        Clave en formato ADESCO-YYYYMM-AAAAA-BBBBB-CCCCC
+        Clave en formato ADESCO-YYYYMMDD-AAAAA-BBBBB-CCCCC
     """
     payload = f"{hardware_id}|{fecha_expiracion}"
     firma = hmac.new(
         _LICENCIA_SECRET, payload.encode("utf-8"), hashlib.sha256
     ).hexdigest()[:15].upper()
 
-    fecha_compact = fecha_expiracion.replace("-", "")  # "2026-04" -> "202604"
+    fecha_compact = fecha_expiracion.replace("-", "")  # "2026-04-03" -> "20260403"
     bloques = [firma[i:i+5] for i in range(0, 15, 5)]
     return "ADESCO-" + fecha_compact + "-" + "-".join(bloques)
 
@@ -186,28 +186,42 @@ def validar_clave_licencia(clave: str, hardware_id: str) -> dict:
                     "mensaje": "Formato de clave invalido."}
 
         partes = clave.split("-")
-        # Formato: ["ADESCO", "202604", "AAAAA", "BBBBB", "CCCCC"] = 5 partes
+        # Formato nuevo: ["ADESCO", "20260403", "AAAAA", "BBBBB", "CCCCC"] = 5 partes
+        # Formato legado: ["ADESCO", "202604",   "AAAAA", "BBBBB", "CCCCC"] = 5 partes
         if len(partes) != 5:
             return {"valida": False, "fecha_expiracion": None,
                     "mensaje": "Formato de clave invalido (se esperan 5 bloques)."}
 
-        fecha_compact = partes[1]  # "202604"
-        if len(fecha_compact) != 6 or not fecha_compact.isdigit():
+        fecha_compact = partes[1]  # "20260403" (nuevo) o "202604" (legado)
+        if fecha_compact.isdigit() and len(fecha_compact) == 8:
+            # Formato nuevo: YYYYMMDD
+            fecha_exp = f"{fecha_compact[:4]}-{fecha_compact[4:6]}-{fecha_compact[6:]}"
+        elif fecha_compact.isdigit() and len(fecha_compact) == 6:
+            # Formato legado: YYYYMM — se interpreta como último día del mes
+            import calendar as _cal
+            anio_l, mes_l = int(fecha_compact[:4]), int(fecha_compact[4:])
+            dia_l = _cal.monthrange(anio_l, mes_l)[1]
+            fecha_exp = f"{fecha_compact[:4]}-{fecha_compact[4:]}-{dia_l:02d}"
+        else:
             return {"valida": False, "fecha_expiracion": None,
                     "mensaje": "La clave no contiene una fecha valida."}
 
-        fecha_exp      = f"{fecha_compact[:4]}-{fecha_compact[4:]}"  # "2026-04"
         firma_recibida = "".join(partes[2:])  # 15 chars
 
         # Intentar con hardware_id real y con wildcard ("*")
+        # Para claves legado (6 dígitos), también probar con payload YYYY-MM original
+        payloads_a_probar = [fecha_exp]
+        if len(fecha_compact) == 6:
+            payloads_a_probar.append(f"{fecha_compact[:4]}-{fecha_compact[4:]}")
         for hw in (hardware_id, "*"):
-            payload        = f"{hw}|{fecha_exp}"
-            firma_esperada = hmac.new(
-                _LICENCIA_SECRET, payload.encode("utf-8"), hashlib.sha256
-            ).hexdigest()[:15].upper()
-            if hmac.compare_digest(firma_recibida, firma_esperada):
-                return {"valida": True, "fecha_expiracion": fecha_exp,
-                        "mensaje": "Licencia valida."}
+            for payload_fecha in payloads_a_probar:
+                payload        = f"{hw}|{payload_fecha}"
+                firma_esperada = hmac.new(
+                    _LICENCIA_SECRET, payload.encode("utf-8"), hashlib.sha256
+                ).hexdigest()[:15].upper()
+                if hmac.compare_digest(firma_recibida, firma_esperada):
+                    return {"valida": True, "fecha_expiracion": fecha_exp,
+                            "mensaje": "Licencia valida."}
 
         return {"valida": False, "fecha_expiracion": None,
                 "mensaje": "Clave invalida o no corresponde a este equipo."}

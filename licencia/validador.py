@@ -29,17 +29,17 @@ def _estado_online() -> dict:
     if r["bloqueado_offline"]:
         return {
             "estado": ESTADO_BLOQUEADA, "dias_restantes": -DIAS_GRACIA_OFFLINE,
-            "fecha_exp": r["vence"] or None, "hardware_id": hardware_id,
+            "fecha_exp": _normalizar_fecha(r["vence"]) or None, "hardware_id": hardware_id,
             "mensaje": r["mensaje"], "modo": "online",
         }
     if not r["activa"]:
         return {
             "estado": ESTADO_BLOQUEADA, "dias_restantes": 0,
-            "fecha_exp": r["vence"] or None, "hardware_id": hardware_id,
+            "fecha_exp": _normalizar_fecha(r["vence"]) or None, "hardware_id": hardware_id,
             "mensaje": r["mensaje"], "modo": "online",
         }
 
-    vence      = r["vence"]
+    vence      = _normalizar_fecha(r["vence"])
     dias_rest  = _calcular_dias(vence)
     desde_cache = r["desde_cache"]
     dias_gracia = r["dias_gracia_restantes"]
@@ -123,15 +123,43 @@ def _estado_hmac() -> dict:
     }
 
 
+def _normalizar_fecha(fecha: str) -> str:
+    """
+    Convierte cualquier formato de fecha a YYYY-MM-DD.
+    Acepta: YYYY-MM-DD (sin cambios), YYYY-MM (último día del mes), YYYY-M (ídem).
+    """
+    if not fecha:
+        return fecha
+    import calendar as _cal
+    partes = fecha.strip().split("-")
+    if len(partes) == 3:
+        # Ya está en formato correcto
+        return f"{int(partes[0]):04d}-{int(partes[1]):02d}-{int(partes[2]):02d}"
+    if len(partes) == 2:
+        # YYYY-MM → convertir al último día del mes
+        anio, mes = int(partes[0]), int(partes[1])
+        dia = _cal.monthrange(anio, mes)[1]
+        return f"{anio:04d}-{mes:02d}-{dia:02d}"
+    return fecha  # formato desconocido, devolver tal cual
+
+
 def _calcular_dias(fecha_exp: str) -> int | None:
     if not fecha_exp:
         return None
     try:
-        anio, mes = map(int, fecha_exp.split("-"))
-        fecha_vence = (
-            datetime.date(anio + 1, 1, 1) if mes == 12
-            else datetime.date(anio, mes + 1, 1)
-        )
+        partes = fecha_exp.split("-")
+        if len(partes) == 3:
+            # Formato nuevo: YYYY-MM-DD — expira al final del día indicado
+            fecha_vence = datetime.date(int(partes[0]), int(partes[1]), int(partes[2]))
+        elif len(partes) == 2:
+            # Formato legado: YYYY-MM — expira al inicio del mes siguiente
+            anio, mes = int(partes[0]), int(partes[1])
+            fecha_vence = (
+                datetime.date(anio + 1, 1, 1) if mes == 12
+                else datetime.date(anio, mes + 1, 1)
+            )
+        else:
+            return None
         return (fecha_vence - datetime.date.today()).days
     except (ValueError, TypeError):
         return None
@@ -150,13 +178,20 @@ def activar_licencia(clave: str) -> tuple[bool, str]:
     guardar_config("licencia_hardware_id", hardware_id)
     guardar_config("licencia_clave",       clave.strip().upper())
 
-    anio, mes  = map(int, fecha_exp.split("-"))
-    mes_nombre = MESES_ES.get(mes, str(mes))
+    partes = fecha_exp.split("-")
+    if len(partes) == 3:
+        anio, mes, dia = int(partes[0]), int(partes[1]), int(partes[2])
+        mes_nombre = MESES_ES.get(mes, str(mes))
+        fecha_display = f"{dia} de {mes_nombre} de {anio}"
+    else:
+        anio, mes = int(partes[0]), int(partes[1])
+        mes_nombre = MESES_ES.get(mes, str(mes))
+        fecha_display = f"{mes_nombre} {anio}"
 
     from herramientas.licencia_online import limpiar_cache_sesion
     limpiar_cache_sesion()
 
-    return True, f"✅ Licencia activada correctamente.\nVálida hasta: {mes_nombre} {anio}"
+    return True, f"✅ Licencia activada correctamente.\nVálida hasta: {fecha_display}"
 
 
 def licencia_operativa() -> bool:

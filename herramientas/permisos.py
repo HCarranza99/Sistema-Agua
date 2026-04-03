@@ -61,6 +61,11 @@ def es_superior_o_igual(rol_actual: str, rol_objetivo: str) -> bool:
     return _nivel(rol_actual) >= _nivel(rol_objetivo)
 
 
+def puede_anular_cobro(rol: str) -> bool:
+    """Todos los roles pueden anular cobros."""
+    return _nivel(rol) >= _nivel(ROL_CAJERO)
+
+
 def puede_modificar_usuario(rol_editor: str, rol_objetivo: str) -> bool:
     """
     Un usuario solo puede editar/eliminar usuarios de menor jerarquía.

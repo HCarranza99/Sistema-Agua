@@ -5,6 +5,7 @@ import os
 import openpyxl
 from tkinter import messagebox
 import herramientas.logger as logger
+from herramientas.permisos import puede_anular_cobro
 import herramientas.respaldos as p_respaldos
 import herramientas.whatsapp_pdf as wp
 from herramientas.email_sender import enviar_correo, construir_cuerpo_cierre_caja
@@ -375,14 +376,24 @@ def crear_pantalla(parent_frame, get_usuario_rol, get_usuario_id=None):
     tabla_card = ctk.CTkFrame(contenido, fg_color=COLOR_BLANCO, corner_radius=10)
     tabla_card.pack(fill="both", expand=True)
 
-    encabezado_tabla(tabla_card, [
-        ("Fecha y Hora", 140), ("Vecino", 190), ("Zona", 110),
-        ("Concepto", 150), ("Usuario", 90)
-    ])
-    ctk.CTkLabel(
-        tabla_card, text="MONTO", font=("Arial", 10, "bold"),
-        text_color=COLOR_TEXTO_MUTED, width=80, anchor="e"
-    ).place(relx=1.0, x=-80, y=18)
+    # Encabezado con todas las columnas alineadas al layout de las filas
+    enc = ctk.CTkFrame(tabla_card, fg_color="#F8F9FB", corner_radius=0, height=36)
+    enc.pack(fill="x")
+    enc.pack_propagate(False)
+    ctk.CTkFrame(enc, height=1, fg_color=COLOR_BORDE).pack(side="bottom", fill="x")
+    for txt, w, anc in [
+        ("FECHA Y HORA", 140, "w"), ("VECINO", 160, "w"), ("ZONA", 100, "w"),
+        ("CONCEPTO", 150, "w"), ("USUARIO", 80, "w")
+    ]:
+        ctk.CTkLabel(enc, text=txt, font=("Arial", 10, "bold"),
+                     text_color=COLOR_TEXTO_MUTED, width=w, anchor=anc
+                     ).pack(side="left", padx=(16 if txt == "FECHA Y HORA" else 4, 0))
+    ctk.CTkLabel(enc, text="MONTO", font=("Arial", 10, "bold"),
+                 text_color=COLOR_TEXTO_MUTED, width=75, anchor="e"
+                 ).pack(side="right", padx=(0, 12))
+    ctk.CTkLabel(enc, text="ACCIONES", font=("Arial", 10, "bold"),
+                 text_color=COLOR_TEXTO_MUTED, width=116, anchor="e"
+                 ).pack(side="right", padx=0)
 
     marco_tabla = ctk.CTkScrollableFrame(tabla_card, fg_color=COLOR_FONDO,
                                           corner_radius=0)
@@ -399,7 +410,14 @@ def crear_pantalla(parent_frame, get_usuario_rol, get_usuario_id=None):
                        COALESCE(v.nombre, v2.nombre), COALESCE(z.nombre, z2.nombre),
                        COALESCE(r.mes,  r2.mes),
                        COALESCE(r.anio, r2.anio),
-                       t.monto_cobrado, u.usuario
+                       t.monto_cobrado, u.usuario,
+                       ce.tipo, ce.descripcion,
+                       t.id, t.anulado,
+                       t.recibo_id, t.cargo_id,
+                       COALESCE(v.id, v2.id),
+                       COALESCE(v.nombre, v2.nombre),
+                       COALESCE(v.telefono, v2.telefono),
+                       COALESCE(v.email, v2.email)
                 FROM transacciones t
                 LEFT JOIN recibos      r   ON t.recibo_id  = r.id
                 LEFT JOIN vecinos      v   ON r.vecino_id  = v.id
@@ -465,10 +483,11 @@ def crear_pantalla(parent_frame, get_usuario_rol, get_usuario_id=None):
         datos = obtener_datos(filtro, mes, anio)
         estado["datos"] = datos
 
-        total = sum(f[6] for f in datos)
+        total = sum(f[6] for f in datos if not f[11])  # excluir anuladas del total
         estado["total"] = total
         lbl_total_val.configure(text=f"${total:.2f}")
-        lbl_txn_val.configure(text=str(len(datos)))
+        activas = sum(1 for f in datos if not f[11])
+        lbl_txn_val.configure(text=str(activas))
         prom = total / len(datos) if datos else 0
         lbl_prom_val.configure(text=f"${prom:.2f}")
         lbl_sub_topbar.configure(text=estado["titulo"])
@@ -477,8 +496,12 @@ def crear_pantalla(parent_frame, get_usuario_rol, get_usuario_id=None):
             mensaje_vacio(marco_tabla, "No hay transacciones en este período.")
             return
 
-        for fecha, hora, vecino, zona, mes_p, anio_p, monto, cajero in datos:
-            fila_w = ctk.CTkFrame(marco_tabla, fg_color=COLOR_BLANCO,
+        for fecha, hora, vecino, zona, mes_p, anio_p, monto, cajero, ce_tipo, ce_desc, t_id, t_anulado, t_recibo_id, t_cargo_id, v_id, v_nombre, v_tel, v_email in datos:
+            es_anulado = bool(t_anulado)
+            bg_fila    = "#FFF5F5" if es_anulado else COLOR_BLANCO
+            alpha_txt  = COLOR_TEXTO_MUTED if es_anulado else COLOR_TEXTO
+
+            fila_w = ctk.CTkFrame(marco_tabla, fg_color=bg_fila,
                                    corner_radius=6, height=46)
             fila_w.pack(fill="x", pady=2, padx=4)
             fila_w.pack_propagate(False)
@@ -487,24 +510,268 @@ def crear_pantalla(parent_frame, get_usuario_rol, get_usuario_id=None):
                          text_color=COLOR_TEXTO_MUTED, width=140,
                          anchor="w").pack(side="left", padx=16)
             ctk.CTkLabel(fila_w, text=vecino or "—",
-                         font=("Arial", 12, "bold"), width=190,
+                         font=("Arial", 12, "bold" if not es_anulado else "normal"),
+                         text_color=alpha_txt, width=160,
                          anchor="w").pack(side="left", padx=4)
             ctk.CTkLabel(fila_w, text=zona or "—", font=FONT_SMALL,
-                         text_color=COLOR_TEXTO_MUTED, width=110,
+                         text_color=COLOR_TEXTO_MUTED, width=100,
                          anchor="w").pack(side="left", padx=4)
+            if ce_tipo:
+                tipo_label = "Mora" if ce_tipo == "mora" else "Consumo extra"
+                concepto = f"{tipo_label} — {mes_p} {anio_p}" if mes_p else tipo_label
+            elif mes_p:
+                concepto = f"Recibo {mes_p} {anio_p}"
+            else:
+                concepto = "Cargo extra"
             ctk.CTkLabel(
                 fila_w,
-                text=f"Recibo {mes_p} {anio_p}" if mes_p else "Cargo extra",
-                font=FONT_SMALL, text_color=COLOR_TEXTO_MUTED,
+                text=("✗ ANULADO" if es_anulado else concepto),
+                font=FONT_SMALL,
+                text_color=COLOR_ROJO if es_anulado else COLOR_TEXTO_MUTED,
                 width=150, anchor="w").pack(side="left", padx=4)
             ctk.CTkLabel(fila_w, text=cajero, fg_color=COLOR_BADGE_AZUL_BG,
                           text_color=COLOR_BADGE_AZUL_TEXT, corner_radius=20,
                           font=FONT_SMALL, width=80,
                           height=22).pack(side="left", padx=4)
+
+            # ── Lado derecho: monto + botones (orden importa en pack) ──────────
+            # El monto se empaca primero para que quede más a la derecha
             ctk.CTkLabel(fila_w, text=f"${monto:.2f}",
                          font=("Arial", 13, "bold"),
-                         text_color=COLOR_VERDE_PAGO, width=80,
-                         anchor="e").pack(side="right", padx=16)
+                         text_color=COLOR_TEXTO_MUTED if es_anulado else COLOR_VERDE_PAGO,
+                         width=75, anchor="e").pack(side="right", padx=(0, 12))
+
+            # Botones Anular / Reimprimir
+            rol_actual = get_usuario_rol() if callable(get_usuario_rol) else get_usuario_rol
+            if not es_anulado and puede_anular_cobro(rol_actual):
+                ctk.CTkButton(
+                    fila_w, text="Anular", width=68, height=28,
+                    corner_radius=6, fg_color="transparent",
+                    border_width=1, border_color=COLOR_ROJO,
+                    text_color=COLOR_ROJO, font=FONT_SMALL,
+                    command=lambda _tid=t_id, _rid=t_recibo_id,
+                                   _cid=t_cargo_id, _vid=v_id,
+                                   _vn=v_nombre, _vt=v_tel, _ve=v_email,
+                                   _mp=mes_p, _ap=anio_p, _mo=monto,
+                                   _con=concepto:
+                        _confirmar_anulacion(
+                            _tid, _rid, _cid, _vid, _vn, _vt, _ve,
+                            _mp, _ap, _mo, _con)
+                ).pack(side="right", padx=(0, 4))
+
+            if mes_p and v_nombre:
+                ctk.CTkButton(
+                    fila_w, text="🖨", width=32, height=28,
+                    corner_radius=6, fg_color="transparent",
+                    border_width=1, border_color=COLOR_BORDE,
+                    text_color=COLOR_TEXTO_MUTED, font=("Arial", 14),
+                    command=lambda _tid=t_id, _vn=v_nombre, _mp=mes_p,
+                                   _ap=anio_p, _mo=monto, _cet=ce_tipo,
+                                   _ced=ce_desc:
+                        _reimprimir(_tid, _vn, _mp, _ap, _mo, _cet, _ced)
+                ).pack(side="right", padx=(0, 4))
+
+    # ── Anulación de cobro ────────────────────────────────────────────────────
+    def _confirmar_anulacion(t_id, recibo_id, cargo_id, v_id,
+                              v_nombre, v_tel, v_email,
+                              mes_p, anio_p, monto, concepto):
+        """Abre modal para confirmar anulación con motivo obligatorio."""
+        from herramientas.email_sender import enviar_correo_async
+        from herramientas.db import obtener_config as _cfg
+        import herramientas.whatsapp_pdf as _wp
+
+        modal = ctk.CTkToplevel()
+        modal.title("Anular Cobro")
+        modal.geometry("460x380")
+        modal.resizable(False, False)
+        modal.grab_set()
+        modal.focus_set()
+        modal.update_idletasks()
+        x = (modal.winfo_screenwidth() // 2) - 230
+        y = (modal.winfo_screenheight() // 2) - 190
+        modal.geometry(f"460x380+{x}+{y}")
+
+        pad = ctk.CTkFrame(modal, fg_color=COLOR_FONDO)
+        pad.pack(fill="both", expand=True, padx=0, pady=0)
+
+        ctk.CTkLabel(pad, text="Anular Cobro", font=("Arial", 15, "bold"),
+                     text_color=COLOR_ROJO).pack(anchor="w", padx=24, pady=(20, 4))
+        ctk.CTkLabel(pad,
+                     text=f"Vecino: {v_nombre}\nConcepto: {concepto}\nMonto: ${monto:.2f}",
+                     font=FONT_SMALL, text_color=COLOR_TEXTO,
+                     justify="left").pack(anchor="w", padx=24, pady=(0, 12))
+
+        ctk.CTkFrame(pad, height=1, fg_color=COLOR_BORDE).pack(fill="x", padx=24)
+
+        ctk.CTkLabel(pad, text="Motivo de anulación *", font=FONT_LABEL,
+                     text_color=COLOR_TEXTO).pack(anchor="w", padx=24, pady=(12, 4))
+        txt_motivo = ctk.CTkTextbox(pad, height=80, corner_radius=8,
+                                     fg_color=COLOR_BLANCO, border_width=1,
+                                     border_color=COLOR_BORDE, font=FONT_BODY)
+        txt_motivo.pack(fill="x", padx=24)
+
+        # Opciones de notificación
+        var_notif_wa    = ctk.BooleanVar(value=bool(v_tel))
+        var_notif_email = ctk.BooleanVar(value=bool(v_email and "@" in (v_email or "")))
+        notif_row = ctk.CTkFrame(pad, fg_color="transparent")
+        notif_row.pack(fill="x", padx=24, pady=(10, 0))
+        ctk.CTkLabel(notif_row, text="Notificar por:", font=FONT_SMALL,
+                     text_color=COLOR_TEXTO_MUTED).pack(side="left", padx=(0, 12))
+        if v_tel:
+            ctk.CTkCheckBox(notif_row, text="WhatsApp", variable=var_notif_wa,
+                             font=FONT_SMALL).pack(side="left", padx=4)
+        if v_email and "@" in (v_email or ""):
+            ctk.CTkCheckBox(notif_row, text="Correo", variable=var_notif_email,
+                             font=FONT_SMALL).pack(side="left", padx=4)
+
+        lbl_err = ctk.CTkLabel(pad, text="", font=FONT_SMALL,
+                                text_color=COLOR_ROJO)
+        lbl_err.pack(anchor="w", padx=24, pady=(4, 0))
+
+        def ejecutar_anulacion():
+            motivo = txt_motivo.get("1.0", "end").strip()
+            if not motivo:
+                lbl_err.configure(text="El motivo es obligatorio.")
+                return
+
+            try:
+                import datetime
+                con = obtener_conexion()
+                cur = con.cursor()
+                ahora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                # 1. Marcar transacción como anulada
+                cur.execute(
+                    "UPDATE transacciones SET anulado=1, motivo_anulacion=?, "
+                    "fecha_anulacion=? WHERE id=?",
+                    (motivo, ahora, t_id))
+
+                # 2. Restaurar el recibo a Pendiente si era un pago de cuota
+                if recibo_id:
+                    # Recuperar monto original del recibo para restaurarlo
+                    cur.execute("SELECT monto, estado_pago FROM recibos WHERE id=?",
+                                (recibo_id,))
+                    rec = cur.fetchone()
+                    if rec:
+                        cur.execute(
+                            "UPDATE recibos SET estado_pago='Pendiente', monto=monto+? "
+                            "WHERE id=?", (monto, recibo_id))
+
+                # 3. Si era cargo extra, marcarlo como no pagado y eliminarlo
+                if cargo_id:
+                    cur.execute("UPDATE cargos_extra SET pagado=0 WHERE id=?",
+                                (cargo_id,))
+
+                # 4. Actualizar estado del vecino
+                if v_id:
+                    cur.execute(
+                        "SELECT COUNT(*) FROM recibos "
+                        "WHERE vecino_id=? AND estado_pago IN ('Pendiente','Parcial')",
+                        (v_id,))
+                    pendientes = cur.fetchone()[0]
+                    cur.execute("UPDATE vecinos SET estado=? WHERE id=?",
+                                ("En Deuda" if pendientes > 0 else "Solvente", v_id))
+
+                con.commit()
+                con.close()
+
+            except Exception as e:
+                logger.registrar("reportes.py", "_confirmar_anulacion", e)
+                messagebox.showerror("Error", f"No se pudo anular el cobro:\n{e}")
+                return
+
+            # 5. Notificaciones
+            comunidad = obtener_config("nombre_comunidad", "Sistema de Agua")
+            msg_wa = (
+                f"Estimado/a {v_nombre},\n\n"
+                f"Le informamos que el cobro registrado por *{concepto}* "
+                f"por un monto de *${monto:.2f}* ha sido *ANULADO*.\n\n"
+                f"Motivo: {motivo}\n\n"
+                f"Si tiene dudas, comuníquese con {comunidad}."
+            )
+            if var_notif_wa.get() and v_tel:
+                import herramientas.whatsapp_pdf as _wp2
+                _wp2.abrir_whatsapp(v_tel, msg_wa)
+
+            if var_notif_email.get() and v_email:
+                cuerpo_html = f"""
+                <div style='font-family:Arial,sans-serif;max-width:520px;margin:auto'>
+                  <div style='background:#C53030;color:white;padding:20px;border-radius:8px 8px 0 0'>
+                    <h2 style='margin:0'>⚠️ Cobro Anulado</h2>
+                    <p style='margin:4px 0 0;opacity:.8'>{comunidad}</p>
+                  </div>
+                  <div style='background:#f9f9f9;padding:20px;border:1px solid #ddd'>
+                    <p>Estimado/a <strong>{v_nombre}</strong>,</p>
+                    <p>Le informamos que el siguiente cobro ha sido <strong>anulado</strong>:</p>
+                    <table style='width:100%;border-collapse:collapse'>
+                      <tr><td style='padding:6px 8px;background:#fef2f2'>Concepto</td>
+                          <td style='padding:6px 8px'>{concepto}</td></tr>
+                      <tr><td style='padding:6px 8px;background:#fef2f2'>Monto</td>
+                          <td style='padding:6px 8px'>${monto:.2f}</td></tr>
+                      <tr><td style='padding:6px 8px;background:#fef2f2'>Motivo</td>
+                          <td style='padding:6px 8px'>{motivo}</td></tr>
+                    </table>
+                    <p style='margin-top:16px;font-size:12px;color:#666'>
+                      Si tiene dudas comuníquese con {comunidad}.
+                    </p>
+                  </div>
+                </div>"""
+                enviar_correo_async(
+                    v_email,
+                    f"Cobro anulado — {comunidad}",
+                    cuerpo_html)
+
+            modal.destroy()
+            # Recargar reporte para reflejar la anulación
+            actualizar_reporte(estado["filtro_activo"])
+
+        ctk.CTkButton(
+            pad, text="Confirmar Anulación", height=42, corner_radius=8,
+            fg_color=COLOR_ROJO, hover_color="#9B2C2C",
+            font=FONT_BTN_SM, text_color=COLOR_BLANCO,
+            command=ejecutar_anulacion
+        ).pack(fill="x", padx=24, pady=(12, 4))
+        ctk.CTkButton(
+            pad, text="Cancelar", height=36, corner_radius=8,
+            fg_color="transparent", text_color=COLOR_TEXTO_MUTED,
+            border_width=1, border_color=COLOR_BORDE, font=FONT_SMALL,
+            command=modal.destroy
+        ).pack(fill="x", padx=24)
+
+    # ── Reimpresión de recibo ──────────────────────────────────────────────────
+    def _reimprimir(t_id, v_nombre, mes_p, anio_p, monto, ce_tipo, ce_desc):
+        """Regenera y abre el PDF de un cobro ya registrado."""
+        import herramientas.whatsapp_pdf as _wp
+        try:
+            if ce_tipo:
+                # Cargo extra: generar PDF simple de cargo
+                tipo_label = "Mora" if ce_tipo == "mora" else "Consumo extra"
+                items = [{"mes_anio": f"{mes_p} {anio_p}", "monto": monto,
+                          "monto_orig": monto, "parcial": False}]
+                cargos = [{"tipo": ce_tipo,
+                           "descripcion": ce_desc or tipo_label,
+                           "monto": monto}]
+                pdf_path = _wp.generar_pdf_recibo(v_nombre, [], monto, "—", cargos)
+            else:
+                items = [{"mes_anio": f"{mes_p} {anio_p}", "monto": monto,
+                          "monto_orig": monto, "parcial": False}]
+                pdf_path = _wp.generar_pdf_recibo(v_nombre, items, monto, "—", [])
+
+            if not pdf_path:
+                messagebox.showerror("Error", "No se pudo generar el PDF.")
+                return
+
+            import os, platform, subprocess
+            if platform.system() == "Windows":
+                os.startfile(pdf_path)
+            elif platform.system() == "Darwin":
+                subprocess.Popen(["open", pdf_path])
+            else:
+                subprocess.Popen(["xdg-open", pdf_path])
+
+        except Exception as e:
+            logger.registrar("reportes.py", "_reimprimir", e)
+            messagebox.showerror("Error", f"No se pudo reimprimir:\n{e}")
 
     def exportar_pdf(cierre_de_caja=False, retornar_ruta=False):
         if not verificar_accion("exportar_pdf"):
@@ -579,4 +846,299 @@ def crear_pantalla(parent_frame, get_usuario_rol, get_usuario_id=None):
 
     frame.after(200, _construir_botones_topbar)
     frame.after(300, lambda: actualizar_reporte("hoy"))
+    return frame
+
+
+# =============================================================================
+# PANTALLA DE LECTURAS DEL PERÍODO
+# =============================================================================
+
+def crear_pantalla_lecturas(parent_frame, get_usuario_rol):
+    """
+    Subpantalla 'Lecturas del período':
+    Tabla de todos los vecinos con medidor, su lectura del mes, anomalías y exportación.
+    """
+    from herramientas.db import obtener_lecturas_periodo, obtener_anomalias_consumo
+    import herramientas.whatsapp_pdf as _wp
+
+    frame = ctk.CTkFrame(parent_frame, fg_color="transparent")
+    hoy = datetime.date.today()
+    lista_anios   = [str(a) for a in range(2025, hoy.year + 2)]
+    meses_nombres = list(MESES_ES.values())
+
+    _periodo = {"mes": MESES_ES[hoy.month], "anio": hoy.year}
+    _datos   = {"filas": [], "anomalias": set()}
+
+    # ── Topbar ─────────────────────────────────────────────────────────────────
+    bar = ctk.CTkFrame(frame, fg_color=COLOR_BLANCO, corner_radius=0, height=60)
+    bar.pack(fill="x")
+    bar.pack_propagate(False)
+    ctk.CTkFrame(bar, height=1, fg_color=COLOR_BORDE).pack(side="bottom", fill="x")
+
+    izq = ctk.CTkFrame(bar, fg_color="transparent")
+    izq.pack(side="left", padx=24, pady=10)
+    ctk.CTkLabel(izq, text="Lecturas del Período",
+                 font=FONT_TOPBAR, text_color=COLOR_TEXTO).pack(anchor="w")
+    lbl_sub = ctk.CTkLabel(izq, text="Cargando...",
+                            font=FONT_SMALL, text_color=COLOR_TEXTO_MUTED)
+    lbl_sub.pack(anchor="w")
+
+    der = ctk.CTkFrame(bar, fg_color="transparent")
+    der.pack(side="right", padx=20)
+
+    combo_anio_l = ctk.CTkComboBox(der, values=lista_anios, width=76, state="readonly")
+    combo_anio_l.pack(side="right", padx=(0, 4))
+    combo_anio_l.set(str(_periodo["anio"]))
+    combo_mes_l = ctk.CTkComboBox(der, values=meses_nombres, width=110, state="readonly")
+    combo_mes_l.pack(side="right", padx=(0, 2))
+    combo_mes_l.set(_periodo["mes"])
+    ctk.CTkLabel(der, text="Período:", font=FONT_SMALL,
+                 text_color=COLOR_TEXTO_MUTED).pack(side="right", padx=(0, 4))
+
+    def _cargar():
+        _periodo["mes"]  = combo_mes_l.get()
+        _periodo["anio"] = int(combo_anio_l.get())
+        cargar_lecturas()
+
+    ctk.CTkButton(der, text="Cargar", height=30, width=60, corner_radius=6,
+                  fg_color=COLOR_AZUL_MARINO, hover_color="#243F6B",
+                  text_color=COLOR_BLANCO, font=FONT_SMALL,
+                  command=_cargar).pack(side="right", padx=(0, 12))
+
+    # Filtro zona
+    zonas_d = []
+    try:
+        con = obtener_conexion()
+        cur = con.cursor()
+        cur.execute("SELECT id, nombre FROM zonas WHERE activa=1 ORDER BY orden, nombre")
+        zonas_d = cur.fetchall()
+        con.close()
+    except Exception:
+        pass
+
+    filtro_zona = {"zona_id": None}
+    if zonas_d:
+        nombres_z = ["Todas las zonas"] + [z[1] for z in zonas_d]
+        ids_z     = [None] + [z[0] for z in zonas_d]
+        combo_z   = ctk.CTkComboBox(der, values=nombres_z, width=150, state="readonly",
+                                     command=lambda v: _set_zona(v, nombres_z, ids_z))
+        combo_z.pack(side="right", padx=8)
+        combo_z.set("Todas las zonas")
+
+    def _set_zona(v, nombres, ids):
+        idx = nombres.index(v) if v in nombres else 0
+        filtro_zona["zona_id"] = ids[idx]
+        cargar_lecturas()
+
+    # Botones export
+    btns_exp = ctk.CTkFrame(der, fg_color="transparent")
+    btns_exp.pack(side="right", padx=(0, 12))
+
+    def _exportar_excel_lecturas():
+        if not _datos["filas"]:
+            messagebox.showwarning("Sin datos", "No hay lecturas para exportar.")
+            return
+        try:
+            ruta_dir = obtener_ruta("ruta_reportes_excel", RUTA_REPORTES_EXCEL_DEFAULT)
+            os.makedirs(ruta_dir, exist_ok=True)
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            nombre = os.path.join(
+                ruta_dir, f"Lecturas_{_periodo['mes']}_{_periodo['anio']}_{ts}.xlsx")
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Lecturas"
+            comunidad = obtener_config("nombre_comunidad", "ADESCO")
+            ws.append([f"{comunidad} — Lecturas {_periodo['mes']} {_periodo['anio']}"])
+            ws.append([])
+            ws.append(["Abonado", "Nombre", "Medidor", "Zona",
+                        "Lect. Anterior", "Lect. Actual", "Consumo m³",
+                        "Excedente m³", "Monto", "Anomalía"])
+            for d in _datos["filas"]:
+                anom = "SÍ" if d["vecino_id"] in _datos["anomalias"] else "No"
+                if d["tiene_lectura"]:
+                    ws.append([
+                        d["num_abonado"] or "—", d["nombre"],
+                        d["num_medidor"] or "—", d["zona"] or "—",
+                        d["lectura_anterior"], d["lectura_actual"],
+                        d["consumo_m3"], d["excedente_m3"], d["monto_total"], anom
+                    ])
+                else:
+                    ws.append([
+                        d["num_abonado"] or "—", d["nombre"],
+                        d["num_medidor"] or "—", d["zona"] or "—",
+                        "—", "—", "—", "—", "—", "PENDIENTE"
+                    ])
+            wb.save(nombre)
+            messagebox.showinfo("Excel generado", "Guardado correctamente.")
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo generar el Excel:\n{e}")
+
+    def _exportar_pdf_lecturas():
+        if not _datos["filas"]:
+            messagebox.showwarning("Sin datos", "No hay lecturas para exportar.")
+            return
+        ruta = _wp.generar_pdf_lecturas(
+            _datos["filas"], _periodo["mes"], _periodo["anio"], _datos["anomalias"])
+        if ruta:
+            messagebox.showinfo("PDF generado", "Guardado correctamente.")
+        else:
+            messagebox.showerror("Error", "No se pudo generar el PDF.")
+
+    ctk.CTkButton(btns_exp, text="📊 Excel", height=34, corner_radius=8,
+                   fg_color=COLOR_VERDE_PAGO, font=FONT_BTN_SM, text_color=COLOR_BLANCO,
+                   command=_exportar_excel_lecturas).pack(side="right", padx=4)
+    ctk.CTkButton(btns_exp, text="📄 PDF", height=34, corner_radius=8,
+                   fg_color=COLOR_ROJO, font=FONT_BTN_SM, text_color=COLOR_BLANCO,
+                   command=_exportar_pdf_lecturas).pack(side="right", padx=4)
+
+    # ── Contenido ──────────────────────────────────────────────────────────────
+    contenido = ctk.CTkFrame(frame, fg_color="transparent")
+    contenido.pack(fill="both", expand=True, padx=24, pady=16)
+
+    # Banner de alerta lecturas faltantes
+    banner_faltantes = ctk.CTkFrame(contenido, fg_color="#FFFBEB", corner_radius=8)
+    lbl_banner = ctk.CTkLabel(banner_faltantes, text="",
+                               font=FONT_SMALL, text_color="#92400E")
+    lbl_banner.pack(anchor="w", padx=12, pady=8)
+
+    # Stats row
+    stats_row = ctk.CTkFrame(contenido, fg_color="transparent")
+    stats_row.pack(fill="x", pady=(0, 10))
+    stats_labels = {}
+    for key, texto, color in [
+        ("total",     "total medidores", "#1A365D"),
+        ("con_lect",  "con lectura",     "#2F855A"),
+        ("sin_lect",  "sin lectura",     "#D69E2E"),
+        ("anomalias", "anomalías",       "#C53030"),
+    ]:
+        lbl_n = ctk.CTkLabel(stats_row, text="—",
+                              font=("Arial", 18, "bold"), text_color=color)
+        lbl_n.pack(side="left", padx=(0, 4))
+        ctk.CTkLabel(stats_row, text=texto, font=FONT_SMALL,
+                     text_color=COLOR_TEXTO_MUTED).pack(side="left", padx=(0, 20))
+        stats_labels[key] = lbl_n
+
+    ctk.CTkLabel(stats_row,
+                 text="🔴 = consumo > 2× promedio histórico",
+                 font=FONT_SMALL, text_color=COLOR_TEXTO_MUTED).pack(side="right")
+
+    # Tabla
+    tabla_card = ctk.CTkFrame(contenido, fg_color=COLOR_BLANCO, corner_radius=10)
+    tabla_card.pack(fill="both", expand=True)
+
+    enc = ctk.CTkFrame(tabla_card, fg_color="#F8F9FB", corner_radius=0, height=36)
+    enc.pack(fill="x")
+    enc.pack_propagate(False)
+    ctk.CTkFrame(enc, height=1, fg_color=COLOR_BORDE).pack(side="bottom", fill="x")
+    for txt, w in [("Abonado", 70), ("Nombre", 170), ("Zona", 100),
+                   ("Lect. Ant.", 90), ("Lect. Act.", 90),
+                   ("Consumo m³", 95), ("Excedente", 85), ("Monto", 80), ("Estado", 100)]:
+        ctk.CTkLabel(enc, text=txt, font=("Arial", 10, "bold"),
+                     text_color=COLOR_TEXTO_MUTED, width=w, anchor="w"
+                     ).pack(side="left", padx=(12 if txt == "Abonado" else 4, 0))
+
+    marco = ctk.CTkScrollableFrame(tabla_card, fg_color=COLOR_FONDO, corner_radius=0)
+    marco.pack(fill="both", expand=True, padx=1, pady=1)
+
+    def cargar_lecturas():
+        for w in marco.winfo_children():
+            w.destroy()
+        banner_faltantes.pack_forget()
+
+        mes_p  = _periodo["mes"]
+        anio_p = _periodo["anio"]
+        zona_id = filtro_zona["zona_id"]
+
+        filas = obtener_lecturas_periodo(mes_p, anio_p)
+
+        # Filtrar por zona si aplica
+        if zona_id and zonas_d:
+            nombres_z_map = {z[0]: z[1] for z in zonas_d}
+            zona_nombre   = nombres_z_map.get(zona_id, "")
+            filas = [f for f in filas if f["zona"] == zona_nombre]
+
+        anomalias = obtener_anomalias_consumo(mes_p, anio_p)
+
+        _datos["filas"]     = filas
+        _datos["anomalias"] = anomalias
+
+        total     = len(filas)
+        con_lect  = sum(1 for f in filas if f["tiene_lectura"])
+        sin_lect  = total - con_lect
+        anom_c    = len(anomalias)
+
+        stats_labels["total"].configure(text=str(total))
+        stats_labels["con_lect"].configure(text=str(con_lect))
+        stats_labels["sin_lect"].configure(text=str(sin_lect))
+        stats_labels["anomalias"].configure(text=str(anom_c))
+
+        lbl_sub.configure(
+            text=f"{mes_p} {anio_p} — {total} vecinos con medidor")
+
+        if sin_lect > 0:
+            lbl_banner.configure(
+                text=f"⚠️  {sin_lect} vecino{'s' if sin_lect > 1 else ''} "
+                     f"sin lectura registrada este período.")
+            banner_faltantes.pack(fill="x", pady=(0, 8))
+
+        if not filas:
+            mensaje_vacio(marco, "No hay vecinos con medidor registrados.")
+            return
+
+        for d in filas:
+            es_anomalia = d["vecino_id"] in anomalias
+            bg = "#FFF5F5" if es_anomalia else (
+                "#F0FFF4" if d["tiene_lectura"] else COLOR_BLANCO)
+
+            fila = ctk.CTkFrame(marco, fg_color=bg, corner_radius=6, height=42)
+            fila.pack(fill="x", pady=2, padx=4)
+            fila.pack_propagate(False)
+
+            ctk.CTkLabel(fila, text=d["num_abonado"] or "—",
+                         font=FONT_SMALL, text_color=COLOR_TEXTO_MUTED,
+                         width=70, anchor="w").pack(side="left", padx=12)
+            ctk.CTkLabel(fila, text=d["nombre"],
+                         font=("Arial", 12, "bold"), text_color=COLOR_TEXTO,
+                         width=170, anchor="w").pack(side="left", padx=4)
+            ctk.CTkLabel(fila, text=d["zona"] or "—",
+                         font=FONT_SMALL, text_color=COLOR_TEXTO_MUTED,
+                         width=100, anchor="w").pack(side="left", padx=4)
+
+            if d["tiene_lectura"]:
+                for val, w in [
+                    (f"{d['lectura_anterior']:.1f}", 90),
+                    (f"{d['lectura_actual']:.1f}",   90),
+                    (f"{d['consumo_m3']:.1f} m³",    95),
+                    (f"{d['excedente_m3']:.1f} m³",  85),
+                    (f"${d['monto_total']:.2f}",      80),
+                ]:
+                    ctk.CTkLabel(fila, text=val, font=FONT_SMALL,
+                                 text_color=COLOR_TEXTO, width=w,
+                                 anchor="w").pack(side="left", padx=4)
+
+                if es_anomalia:
+                    from config import COLOR_BADGE_ROJO_BG, COLOR_BADGE_ROJO_TEXT
+                    from pantallas.componentes import badge
+                    badge(fila, "⚠ Anomalía",
+                          COLOR_BADGE_ROJO_BG, COLOR_BADGE_ROJO_TEXT,
+                          width=98).pack(side="left", padx=4)
+                else:
+                    from config import COLOR_BADGE_VERDE_BG, COLOR_BADGE_VERDE_TEXT
+                    from pantallas.componentes import badge
+                    badge(fila, "✓ OK",
+                          COLOR_BADGE_VERDE_BG, COLOR_BADGE_VERDE_TEXT,
+                          width=98).pack(side="left", padx=4)
+            else:
+                for _ in range(5):
+                    ctk.CTkLabel(fila, text="—", font=FONT_SMALL,
+                                 text_color=COLOR_TEXTO_MUTED,
+                                 width=[90, 90, 95, 85, 80][_],
+                                 anchor="w").pack(side="left", padx=4)
+                from config import COLOR_BADGE_AMBER_BG, COLOR_BADGE_AMBER_TEXT
+                from pantallas.componentes import badge
+                badge(fila, "Pendiente",
+                      COLOR_BADGE_AMBER_BG, COLOR_BADGE_AMBER_TEXT,
+                      width=98).pack(side="left", padx=4)
+
+    frame.after(200, cargar_lecturas)
     return frame

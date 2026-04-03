@@ -29,7 +29,7 @@ def generar_clave_hmac(hardware_id: str, fecha_exp: str) -> str:
     firma   = hmac.new(_LICENCIA_SECRET, payload.encode("utf-8"),
                        hashlib.sha256).hexdigest()[:15].upper()
     bloques = [firma[i:i+5] for i in range(0, 15, 5)]
-    return "ADESCO-" + fecha_exp.replace("-", "") + "-" + "-".join(bloques)
+    return "ADESCO-" + fecha_exp.replace("-", "") + "-" + "-".join(bloques)  # YYYYMMDD
 
 
 def calcular_password_soporte(hardware_id: str) -> str:
@@ -38,14 +38,19 @@ def calcular_password_soporte(hardware_id: str) -> str:
     return f"{raw[:4]}-{raw[4:8]}-{raw[8:12]}"
 
 
-def _pedir_fecha() -> tuple[int, int, str]:
+def _pedir_fecha() -> tuple[int, int, int, str]:
+    import calendar
     hoy = datetime.date.today()
-    print(f"\nFecha de expiración (actual: {MESES_ES[hoy.month]} {hoy.year})")
-    anio = int(input(f"Año [{hoy.year}]: ").strip() or hoy.year)
-    mes  = int(input(f"Mes (1-12) [{hoy.month}]: ").strip() or hoy.month)
+    print(f"\nFecha de expiración (actual: {hoy.day} de {MESES_ES[hoy.month]} {hoy.year})")
+    anio = int(input(f"Año  [{hoy.year}]: ").strip() or hoy.year)
+    mes  = int(input(f"Mes  (1-12) [{hoy.month}]: ").strip() or hoy.month)
     if not (1 <= mes <= 12):
         raise ValueError("Mes inválido")
-    return anio, mes, f"{anio}-{mes:02d}"
+    max_dia = calendar.monthrange(anio, mes)[1]
+    dia  = int(input(f"Día  (1-{max_dia}) [{max_dia}]: ").strip() or max_dia)
+    if not (1 <= dia <= max_dia):
+        raise ValueError("Día inválido")
+    return anio, mes, dia, f"{anio}-{mes:02d}-{dia:02d}"
 
 
 def _api_github(token: str, method: str, endpoint: str, body=None):
@@ -108,7 +113,7 @@ def accion_generar_clave(token: str) -> None:
     notas   = input("Notas opcionales: ").strip()
 
     try:
-        anio, mes, fecha_exp = _pedir_fecha()
+        anio, mes, dia, fecha_exp = _pedir_fecha()
     except ValueError:
         print("Fecha inválida.")
         return
