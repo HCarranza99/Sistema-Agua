@@ -1,5 +1,6 @@
 import os
 import datetime
+import calendar
 import webbrowser
 import urllib.parse
 import platform
@@ -8,6 +9,8 @@ from fpdf import FPDF
 from config import RUTA_RECIBOS_DEFAULT, RUTA_REPORTES_PDF_DEFAULT
 import herramientas.logger as logger
 
+
+# ── Utilidades ────────────────────────────────────────────────────────────────
 
 def _ruta_recibos() -> str:
     from herramientas.db import obtener_ruta
@@ -24,6 +27,17 @@ def _nombre_comunidad() -> str:
     return obtener_config("nombre_comunidad", "ADESCO")
 
 
+def _sanitizar_nombre(nombre: str) -> str:
+    invalidos = r'\/:*?"<>|()'
+    return "".join("_" if c in invalidos else c for c in nombre).replace(" ", "_")
+
+
+def _lat1(texto) -> str:
+    if texto is None:
+        return ""
+    return str(texto).encode("latin-1", "replace").decode("latin-1")
+
+
 def _abrir_carpeta(ruta: str) -> None:
     try:
         if platform.system() == "Windows":
@@ -36,428 +50,566 @@ def _abrir_carpeta(ruta: str) -> None:
         pass
 
 
-def _sanitizar_nombre(nombre: str) -> str:
-    """Elimina caracteres inválidos para nombres de archivo en Windows."""
-    invalidos = r'\/:*?"<>|()'
-    resultado = "".join("_" if c in invalidos else c for c in nombre)
-    return resultado.replace(" ", "_")
-
-
-def _lat1(texto: str) -> str:
-    """Convierte string a Latin-1 seguro para fpdf."""
-    if texto is None:
-        return ""
-    return str(texto).encode("latin-1", "replace").decode("latin-1")
-
-
-def _fecha_limite_str(anio: int, mes_nombre: str) -> str:
-    """Retorna la fecha límite de pago como string 'DD/MM/YYYY'."""
+def _fecha_limite_str(anio: int, mes_nombre: str) -> tuple:
+    """Retorna (dia_int, 'DD DE MES DE YYYY') según config."""
     from herramientas.db import obtener_config
     from config import MESES_ES
     try:
-        dia_lim = int(obtener_config("fecha_limite_pago", "25") or 25)
+        dia_lim   = int(obtener_config("fecha_limite_pago", "25") or 25)
         meses_inv = {v: k for k, v in MESES_ES.items()}
         num_mes   = meses_inv.get(mes_nombre, 1)
-        # La fecha límite es en el mismo mes
-        import calendar
-        dias_mes = calendar.monthrange(anio, num_mes)[1]
-        dia_lim  = min(dia_lim, dias_mes)
-        return f"{dia_lim:02d}/{num_mes:02d}/{anio}"
+        dias_mes  = calendar.monthrange(anio, num_mes)[1]
+        dia_lim   = min(dia_lim, dias_mes)
+        nombre_mes_up = mes_nombre.upper()
+        return dia_lim, f"{dia_lim} DE {nombre_mes_up} DE {anio}"
     except Exception:
-        return "—"
+        return 25, "25"
 
 
 # =============================================================================
-# PDF FACTURA — diseño completo (pendiente o pagado)
+# CLASE PDF — diseño fiel al formato físico de la imagen
 # =============================================================================
 
-class _FacturaPDF(FPDF):
-    """PDF con encabezado institucional y layout de factura."""
-
-    def __init__(self, comunidad, logo_path=None):
-        super().__init__()
-        self.comunidad  = comunidad
-        self.logo_path  = logo_path
-        self.set_margins(15, 15, 15)
-        self.set_auto_page_break(True, margin=15)
-
-    # ── helpers de estilo ─────────────────────────────────────────────────────
-    def _linea(self):
-        self.set_draw_color(26, 54, 93)   # azul marino
-        self.line(15, self.get_y(), 195, self.get_y())
-        self.ln(3)
-
-    def _linea_gris(self):
-        self.set_draw_color(226, 232, 240)
-        self.line(15, self.get_y(), 195, self.get_y())
-        self.ln(2)
-
-    def _seccion(self, titulo):
-        self.set_font("Arial", "B", 9)
-        self.set_text_color(26, 54, 93)
-        self.cell(0, 6, _lat1(titulo.upper()), ln=True)
-        self._linea_gris()
-        self.set_text_color(0, 0, 0)
-
-    def _fila_kv(self, key, val, ancho_key=50):
-        self.set_font("Arial", "B", 10)
-        self.set_text_color(113, 128, 150)
-        self.cell(ancho_key, 6, _lat1(key + ":"))
-        self.set_font("Arial", "", 10)
-        self.set_text_color(26, 32, 44)
-        self.cell(0, 6, _lat1(str(val)), ln=True)
-        self.set_text_color(0, 0, 0)
-
-    def encabezado_factura(self, num_factura, fecha_emision, fecha_limite,
-                           mes_periodo, anio_periodo):
-        """Encabezado con logo, nombre y número de factura."""
-        # Logo (si existe)
-        y_inicio = self.get_y()
-        if self.logo_path and os.path.exists(self.logo_path):
-            try:
-                self.image(self.logo_path, x=15, y=y_inicio, h=18)
-            except Exception:
-                pass
-            self.set_y(y_inicio)
-            self.set_x(45)
-
-        # Nombre de la comunidad
-        self.set_font("Arial", "B", 16)
-        self.set_text_color(26, 54, 93)
-        self.cell(0, 9, _lat1(self.comunidad), ln=True, align="C")
-        self.set_font("Arial", "I", 11)
-        self.set_text_color(113, 128, 150)
-        self.cell(0, 6, _lat1("Factura por Servicio de Agua Potable"), ln=True, align="C")
-        self.set_text_color(0, 0, 0)
-        self._linea()
-
-        # Número de factura y fechas — dos columnas
-        y_ref = self.get_y()
-        self.set_font("Arial", "B", 12)
-        self.set_text_color(26, 54, 93)
-        self.cell(90, 8, _lat1(f"Factura N.{num_factura}"))
-        self.set_font("Arial", "", 10)
-        self.set_text_color(26, 32, 44)
-        self.cell(0, 8, _lat1(f"Fecha de emisión: {fecha_emision}"), ln=True, align="R")
-
-        self.set_font("Arial", "", 10)
-        self.set_text_color(113, 128, 150)
-        self.cell(90, 6, _lat1(f"Período: {mes_periodo} {anio_periodo}"))
-        self.set_text_color(196, 48, 48)
-        self.set_font("Arial", "B", 10)
-        self.cell(0, 6, _lat1(f"Fecha límite de pago: {fecha_limite}"),
-                  ln=True, align="R")
-        self.set_text_color(0, 0, 0)
-        self.ln(2)
-        self._linea_gris()
-
-
-def _construir_pdf_factura(
-    nombre_vecino: str,
-    num_abonado: str,
-    categoria: str,
-    direccion: str,
-    num_medidor: str,
-    zona: str,
-    mes: str,
-    anio: int,
-    tarifa_basica: float,
-    lectura_datos: dict,    # None si cuota fija
-    deudas_pendientes: list,
-    cargos_extra: list,
-    mora: float,
-    es_pagado: bool,
-    num_factura: str,
-    cajero: str,
-) -> FPDF:
+class _FacturaRecibo(FPDF):
     """
-    Construye el objeto FPDF con el diseño completo de factura.
-    lectura_datos: {anterior, actual, consumo, excedente, monto_excedente, monto} o None
+    Genera un recibo en A5 (148 x 210 mm) con diseño de factura física:
+    encabezado institucional, datos del abonado, tabla de lecturas,
+    tabla de conceptos y pie con totales.
+    """
+
+    def __init__(self):
+        super().__init__(format="A5")
+        self.set_margins(6, 6, 6)
+        self.set_auto_page_break(False)
+        self.add_page()
+        self._W = self.w - 12          # 136 mm de ancho útil
+        self._X = self.l_margin        # 6 mm margen izquierdo
+        self._BORDE = "LRTB"
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+
+    def _at(self, x=None, y=None):
+        if x is not None:
+            self.set_x(x)
+        if y is not None:
+            self.set_y(y)
+
+    def _cell(self, w, h, txt="", borde=0, ln=0, align="L",
+              fill=False, bold=False, size=9):
+        self.set_font("Arial", "B" if bold else "", size)
+        self.cell(w, h, _lat1(txt), border=borde, ln=ln,
+                  align=align, fill=fill)
+
+    def _multi(self, w, h, txt="", borde=0, align="L",
+               bold=False, size=9):
+        self.set_font("Arial", "B" if bold else "", size)
+        self.multi_cell(w, h, _lat1(txt), border=borde, align=align)
+
+    # ── secciones ─────────────────────────────────────────────────────────────
+
+    def header_institucional(self, comunidad: str, municipio: str,
+                              logo_path: str = None):
+        """Bloque superior: logo (opcional), nombre organización, subtítulo."""
+        W = self._W
+        X = self._X
+        y0 = self.get_y()
+
+        # Borde exterior del encabezado (dibujado al final cuando sabemos la altura)
+        self.set_font("Arial", "B", 10)
+
+        # Logo a la derecha si existe
+        if logo_path and os.path.exists(logo_path):
+            try:
+                self.image(logo_path, x=X + W - 22, y=y0 + 2, h=14)
+            except Exception:
+                logo_path = None
+
+        logo_w = 22 if logo_path else 0
+
+        # Nombre organización centrado
+        self.set_xy(X, y0)
+        self.set_font("Arial", "B", 10)
+        self.multi_cell(W - logo_w, 5,
+                        _lat1(comunidad.upper()),
+                        border=0, align="C")
+
+        # Subtítulo
+        self.set_x(X)
+        self.set_font("Arial", "", 9)
+        self.cell(W - logo_w, 5,
+                  _lat1("FACTURA POR SERVICIO DE AGUA POTABLE"),
+                  ln=True, align="C")
+
+        # Borde del bloque
+        h_bloque = self.get_y() - y0 + 2
+        self.rect(X, y0, W, h_bloque)
+        self.ln(2)
+
+    def fila_numero_factura(self, num_factura: str):
+        """Número de factura alineado a la derecha."""
+        W = self._W
+        X = self._X
+        self.set_xy(X, self.get_y())
+        self.set_font("Arial", "", 8)
+        self.cell(W - 38, 5, "", ln=0)
+        self.set_font("Arial", "B", 9)
+        self.cell(38, 5, _lat1(f"Factura N.{num_factura}"), ln=True, align="R")
+
+    def seccion_datos_cliente(self, nombre: str, num_abonado: str,
+                               categoria: str, direccion: str,
+                               num_medidor: str, fecha_emision: str):
+        """Bloque con datos del abonado (izq) y medidor/fecha (der)."""
+        W  = self._W
+        X  = self._X
+        y0 = self.get_y()
+        W_izq = round(W * 0.64)
+        W_der = W - W_izq
+        H_fila = 5
+
+        # ── Columna izquierda ─────────────────────────────────────────────────
+        self.set_xy(X, y0)
+        self.set_font("Arial", "", 7)
+        self.cell(W_izq, H_fila, _lat1("Nombre del Usuario:"), border="LT")
+        # columna derecha header
+        self.set_font("Arial", "B", 7)
+        self.cell(W_der, H_fila, _lat1("Medidor"), border="LRT", align="C", ln=True)
+
+        # nombre del vecino (más grande)
+        self.set_xy(X, self.get_y())
+        self.set_font("Arial", "B", 11)
+        # Nombre puede ser largo, lo truncamos a una línea
+        nombre_corto = nombre[:30] if len(nombre) > 30 else nombre
+        self.cell(W_izq, 7, _lat1(nombre_corto), border="LB")
+        # número de medidor
+        self.set_font("Arial", "B", 10)
+        self.cell(W_der, 7, _lat1(num_medidor or "—"), border="LRB", align="C", ln=True)
+
+        # abonado + categoría
+        self.set_xy(X, self.get_y())
+        self.set_font("Arial", "", 8)
+        self.cell(W_izq, H_fila,
+                  _lat1(f"Numero #{num_abonado or '—'}"),
+                  border="LT")
+        self.set_font("Arial", "B", 7)
+        self.cell(W_der, H_fila, _lat1("Fecha de"),
+                  border="LT", align="C", ln=True)
+
+        # categoría
+        self.set_xy(X, self.get_y())
+        self.set_font("Arial", "B", 8)
+        self.cell(W_izq, H_fila, _lat1((categoria or "Residencial").upper()),
+                  border="L")
+        self.set_font("Arial", "", 7)
+        self.cell(W_der, H_fila, _lat1("Emision:"),
+                  border="L", align="C", ln=True)
+
+        # dirección (dos filas si es larga)
+        self.set_xy(X, self.get_y())
+        self.set_font("Arial", "", 7)
+        dir_txt = f"Direccion: {direccion or '—'}"
+        self.cell(W_izq, H_fila, _lat1(dir_txt[:42]), border="L")
+        self.set_font("Arial", "B", 9)
+        self.cell(W_der, H_fila, _lat1(fecha_emision), border="LR", align="C", ln=True)
+
+        # fila de cierre
+        self.set_xy(X, self.get_y())
+        self.cell(W_izq, 2, "", border="LB")
+        self.cell(W_der, 2, "", border="LRB", ln=True)
+
+    def seccion_lecturas(self, ant: float, act: float,
+                          consumo: float, excedente: float):
+        """Tabla de lecturas de medidor (4 columnas)."""
+        W  = self._W
+        X  = self._X
+        Hh = 5   # header height
+        Hr = 6   # row height
+        c  = [38, 34, 30, W - 38 - 34 - 30]  # column widths
+
+        # Encabezados
+        self.set_xy(X, self.get_y())
+        self.set_font("Arial", "", 8)
+        for txt, w in zip(["Lectura Anterior", "Lectura Actual",
+                            "Consumo", "Sobre consumo"], c):
+            self.cell(w, Hh, _lat1(txt), border=1, align="C")
+        self.ln()
+
+        # Valores
+        self.set_xy(X, self.get_y())
+        self.set_font("Arial", "B", 10)
+        for val, w in zip([f"{ant:.0f}", f"{act:.0f}",
+                           f"{consumo:.0f}", f"{excedente:.0f}"], c):
+            self.cell(w, Hr, _lat1(val), border=1, align="C")
+        self.ln()
+
+    def seccion_conceptos(self, tarifa_basica: float,
+                           cargo_consumo: float, mora: float,
+                           otros: list):
+        """
+        Tabla de conceptos: header + filas de detalle + filas vacías de relleno.
+        otros: lista de (descripcion, monto)
+        """
+        W    = self._W
+        X    = self._X
+        Wc   = round(W * 0.72)   # col conceptos
+        Wv   = W - Wc             # col valores
+        Hh   = 6
+        Hr   = 6
+        N_FILAS_MIN = 6   # siempre al menos este número de filas en el cuerpo
+
+        # Encabezado
+        self.set_xy(X, self.get_y())
+        self.set_font("Arial", "B", 9)
+        self.cell(Wc, Hh, _lat1("CONCEPTOS"), border=1, align="C")
+        self.cell(Wv, Hh, _lat1("VALORES"),   border=1, align="C", ln=True)
+
+        # Armar filas
+        filas = []
+        filas.append(("Tarifa Basica", tarifa_basica))
+        if cargo_consumo > 0:
+            filas.append(("Cargo Por Sobre consumo", cargo_consumo))
+        if mora > 0:
+            filas.append(("Recargo por mora", mora))
+        for desc, mto in (otros or []):
+            filas.append((desc, mto))
+
+        # Dibujar filas reales
+        self.set_font("Arial", "", 9)
+        for desc, mto in filas:
+            self.set_xy(X, self.get_y())
+            self.cell(Wc, Hr, _lat1(f"  {desc}"), border="LRB", align="R")
+            self.cell(Wv, Hr, _lat1(f"  ${mto:.2f}"), border="LRB", align="R", ln=True)
+
+        # Filas vacías de relleno
+        vacías = max(0, N_FILAS_MIN - len(filas))
+        for _ in range(vacías):
+            self.set_xy(X, self.get_y())
+            self.cell(Wc, Hr, "", border="LRB")
+            self.cell(Wv, Hr, "", border="LRB", ln=True)
+
+    def seccion_footer(self, mes: str, anio: int,
+                        m3_incluidos: float,
+                        monto_mes: float,
+                        total_deudas: float,
+                        mora_si_vence: float):
+        """
+        Pie de factura:
+          - Fila "Después De Vencido Pagará" | "Tarifa Básica por X m³"
+          - Última Fecha De Pago | Total Del Mes    | $X
+          -                      | Meses Anteriores | $X
+          -  31 DE MES DE YYYY   | Total General    | $X
+        """
+        W   = self._W
+        X   = self._X
+        _, fecha_lim_txt = _fecha_limite_str(anio, mes)
+        total_general    = monto_mes + total_deudas
+        monto_vencido    = total_general + mora_si_vence
+
+        # Anchos de columnas del pie
+        W1 = round(W * 0.40)   # "Última Fecha..."
+        W2 = round(W * 0.38)   # "Total Del Mes" etc.
+        W3 = W - W1 - W2       # monto
+
+        H = 6
+
+        # Fila vencido
+        self.set_xy(X, self.get_y())
+        self.set_font("Arial", "", 7)
+        self.cell(W1, H * 2,
+                  _lat1(f"Despues De Vencido Pagara\n${monto_vencido:.2f}"),
+                  border="LTR", align="C")
+        self.set_font("Arial", "", 7)
+        self.cell(W2 + W3, H * 2,
+                  _lat1(f"Tarifa Basica por\n{m3_incluidos:.0f} Metros Cubicos."),
+                  border="LTR", align="C", ln=True)
+
+        # Totales (3 filas x 3 columnas)
+        totales = [
+            ("Total Del Mes",    monto_mes),
+            ("Meses Anteriores", total_deudas),
+            ("Total General",    total_general),
+        ]
+        fechas_col = [
+            "Ultima Fecha",
+            "De Pago",
+            fecha_lim_txt,
+        ]
+
+        for i, ((label, monto), fecha_txt) in enumerate(zip(totales, fechas_col)):
+            self.set_xy(X, self.get_y())
+
+            borde_izq  = "LTB" if i < 2 else "LTRB"
+            borde_med  = "LTB" if i < 2 else "LTRB"
+            borde_der  = "LTRB"
+
+            # Columna izquierda (fecha)
+            if i == 2:
+                self.set_font("Arial", "B", 8)
+            else:
+                self.set_font("Arial", "", 7)
+            self.cell(W1, H, _lat1(fecha_txt), border=borde_izq, align="C")
+
+            # Columna central (label)
+            self.set_font("Arial", "", 8)
+            self.cell(W2, H, _lat1(label), border=borde_med, align="C")
+
+            # Columna derecha (monto)
+            self.set_font("Arial", "B", 9 if i == 2 else 8)
+            self.cell(W3, H, _lat1(f"${monto:.2f}"),
+                      border=borde_der, align="R", ln=True)
+
+    def sello_pagado(self):
+        """Dibuja el sello 'PAGADO' en diagonal sobre el contenido."""
+        self.set_font("Arial", "B", 40)
+        self.set_text_color(47, 133, 90)
+        # Guardar estado y rotar
+        with self.rotation(30, self.w / 2, self.h / 2):
+            self.set_xy(self.w / 2 - 45, self.h / 2 - 10)
+            self.cell(90, 20, _lat1("PAGADO"), border=0, align="C")
+        self.set_text_color(0, 0, 0)
+
+
+# =============================================================================
+# FUNCIÓN PRINCIPAL — construir y guardar el PDF
+# =============================================================================
+
+def _generar_factura(
+    nombre_vecino: str,
+    num_abonado:   str,
+    categoria:     str,
+    direccion:     str,
+    num_medidor:   str,
+    mes:           str,
+    anio:          int,
+    tarifa_basica: float,
+    lectura_datos: dict,     # None si cuota fija
+    deudas_pendientes: list,
+    cargos_extra:  list,
+    mora_auto:     float,
+    es_pagado:     bool,
+    num_factura:   str,
+    ruta_salida:   str,
+) -> str:
+    """
+    Construye el PDF en el formato físico de factura y lo guarda en ruta_salida.
+    lectura_datos: {anterior, actual, consumo, excedente, monto_excedente, monto}
     """
     from herramientas.db import obtener_config
-    comunidad  = _nombre_comunidad()
-    ruta_logo  = obtener_config("ruta_logo", "")
-    fecha_emi  = datetime.date.today().strftime("%d/%m/%Y")
-    fecha_lim  = _fecha_limite_str(anio, mes)
-    total_deudas = sum(d["monto"] for d in deudas_pendientes)
+    comunidad   = _nombre_comunidad()
+    municipio   = obtener_config("municipio", "")
+    ruta_logo   = obtener_config("ruta_logo", "")
+    m3_inc      = float(obtener_config("m3_incluidos", "25") or 25)
+    mora_tipo   = obtener_config("mora_tipo", "fijo")
+    mora_valor  = float(obtener_config("mora_valor", "1.00") or 1.0)
 
-    pdf = _FacturaPDF(comunidad, ruta_logo if ruta_logo else None)
-    pdf.add_page()
+    fecha_emi = datetime.date.today().strftime("%d/%m/%y")
 
-    pdf.encabezado_factura(num_factura, fecha_emi, fecha_lim, mes, anio)
-
-    # ── Datos del abonado ─────────────────────────────────────────────────────
-    pdf._seccion("Datos del abonado")
-    pdf._fila_kv("Nombre",          nombre_vecino)
-    pdf._fila_kv("N° Abonado",      num_abonado or "—")
-    pdf._fila_kv("Categoría",       categoria or "Residencial")
-    pdf._fila_kv("Dirección",       direccion or "—")
-    if num_medidor:
-        pdf._fila_kv("N° Medidor",  num_medidor)
-    if zona:
-        pdf._fila_kv("Zona",        zona)
-    pdf.ln(3)
-
-    # ── Tabla de lecturas (solo medidor) ──────────────────────────────────────
+    # Calcular montos
     if lectura_datos:
-        pdf._seccion("Lecturas del período")
-        # Encabezados de tabla
-        pdf.set_fill_color(244, 246, 249)
-        pdf.set_font("Arial", "B", 9)
-        pdf.set_text_color(113, 128, 150)
-        for txt, w in [("Lectura anterior", 45), ("Lectura actual", 40),
-                       ("Consumo m³", 35), ("Excedente m³", 40), ("Monto excedente", 40)]:
-            pdf.cell(w, 7, _lat1(txt), border=1, fill=True, align="C")
-        pdf.ln()
-        # Valores
-        pdf.set_font("Arial", "", 10)
-        pdf.set_text_color(26, 32, 44)
+        monto_mes     = lectura_datos.get("monto", tarifa_basica)
+        cargo_consumo = lectura_datos.get("monto_excedente", 0)
         ant  = lectura_datos.get("anterior", 0)
         act  = lectura_datos.get("actual",   0)
         cons = lectura_datos.get("consumo",  0)
         exc  = lectura_datos.get("excedente", 0)
-        m_exc = lectura_datos.get("monto_excedente", 0)
-        for val, w in [(f"{ant:.1f}", 45), (f"{act:.1f}", 40),
-                       (f"{cons:.1f}", 35), (f"{exc:.1f}", 40), (f"${m_exc:.2f}", 40)]:
-            pdf.cell(w, 7, _lat1(val), border=1, align="C")
-        pdf.ln(5)
-
-    # ── Tabla de conceptos ────────────────────────────────────────────────────
-    pdf._seccion("Conceptos del mes")
-    pdf.set_font("Arial", "B", 9)
-    pdf.set_fill_color(244, 246, 249)
-    pdf.set_text_color(113, 128, 150)
-    pdf.cell(130, 7, _lat1("Descripción"), border=1, fill=True)
-    pdf.cell(50,  7, _lat1("Monto"),       border=1, fill=True, align="R")
-    pdf.ln()
-
-    pdf.set_font("Arial", "", 10)
-    pdf.set_text_color(26, 32, 44)
-
-    def _fila_concepto(desc, monto, negrita=False):
-        if negrita:
-            pdf.set_font("Arial", "B", 10)
-        else:
-            pdf.set_font("Arial", "", 10)
-        pdf.cell(130, 7, _lat1(desc), border=1)
-        pdf.cell(50,  7, _lat1(f"${monto:.2f}"), border=1, align="R")
-        pdf.ln()
-
-    m3_inc  = float(obtener_config("m3_incluidos", "25") or 25)
-    _fila_concepto(f"Tarifa básica (hasta {m3_inc:.0f} m³)", tarifa_basica)
-
-    if lectura_datos and lectura_datos.get("excedente", 0) > 0:
-        exc  = lectura_datos["excedente"]
-        mxc  = lectura_datos.get("monto_excedente", 0)
-        _fila_concepto(f"Cargo por sobre consumo ({exc:.1f} m³)", mxc)
-
-    for cargo in (cargos_extra or []):
-        tipo_txt = "Mora" if cargo.get("tipo") == "mora" else "Cargo adicional"
-        _fila_concepto(f"{tipo_txt}: {cargo.get('descripcion','')}", cargo.get("monto", 0))
-
-    if mora > 0:
-        _fila_concepto("Recargo por mora", mora)
-
-    # Subtotal mes
-    monto_mes = (lectura_datos["monto"] if lectura_datos else tarifa_basica) + mora
-    monto_mes += sum(c.get("monto", 0) for c in (cargos_extra or []))
-    pdf.ln(1)
-    pdf.set_fill_color(235, 248, 255)
-    pdf.set_font("Arial", "B", 10)
-    pdf.set_text_color(26, 54, 93)
-    pdf.cell(130, 7, _lat1("Subtotal mes actual"), border=1, fill=True)
-    pdf.cell(50,  7, _lat1(f"${monto_mes:.2f}"), border=1, align="R", fill=True)
-    pdf.ln()
-    pdf.set_text_color(0, 0, 0)
-
-    # Meses anteriores adeudados
-    if deudas_pendientes:
-        for d in deudas_pendientes:
-            pdf.set_font("Arial", "", 10)
-            pdf.set_text_color(155, 44, 44)
-            pdf.cell(130, 7, _lat1(f"Deuda pendiente: {d['mes']} {d['anio']}"), border=1)
-            pdf.cell(50,  7, _lat1(f"${d['monto']:.2f}"), border=1, align="R")
-            pdf.ln()
-        pdf.set_text_color(0, 0, 0)
-
-    # Total general
-    total_general = monto_mes + total_deudas
-    pdf.ln(2)
-    pdf.set_fill_color(26, 54, 93)
-    pdf.set_font("Arial", "B", 12)
-    pdf.set_text_color(255, 255, 255)
-    pdf.cell(130, 9, _lat1("TOTAL GENERAL"), border=0, fill=True)
-    pdf.cell(50,  9, _lat1(f"${total_general:.2f}"), border=0, align="R", fill=True)
-    pdf.ln(3)
-    pdf.set_text_color(0, 0, 0)
-
-    # Nota fecha límite / sello PAGADO
-    pdf.ln(4)
-    if es_pagado:
-        pdf.set_font("Arial", "B", 22)
-        pdf.set_text_color(47, 133, 90)
-        pdf.cell(0, 12, _lat1("✓  PAGADO"), ln=True, align="C")
     else:
-        pdf.set_font("Arial", "I", 9)
-        pdf.set_text_color(113, 128, 150)
-        pdf.cell(0, 6,
-                 _lat1(f"Si paga antes del {fecha_lim}, su servicio se mantiene activo. "
-                       f"Atendido por: {cajero}."),
-                 ln=True, align="C")
-    pdf.set_text_color(0, 0, 0)
+        monto_mes     = tarifa_basica
+        cargo_consumo = 0
+        ant = act = cons = exc = 0
 
-    return pdf
+    # Mora automática si el recibo ya está vencido (solo en recibos pendientes)
+    if mora_auto > 0:
+        mora_display = mora_auto
+    else:
+        mora_display = 0
+
+    # Mora que aparecería si no paga a tiempo (para "Después de Vencido")
+    if mora_tipo == "porcentaje":
+        mora_si_vence = round(monto_mes * mora_valor / 100, 2)
+    else:
+        mora_si_vence = mora_valor
+
+    total_deudas  = sum(d.get("monto", 0) for d in (deudas_pendientes or []))
+    otros_cargos  = [(c.get("descripcion", "Cargo"), c.get("monto", 0))
+                     for c in (cargos_extra or [])]
+
+    try:
+        pdf = _FacturaRecibo()
+
+        # 1 — Encabezado institucional
+        pdf.header_institucional(comunidad, municipio,
+                                  ruta_logo if ruta_logo else None)
+
+        # 2 — Número de factura
+        pdf.fila_numero_factura(num_factura)
+
+        # 3 — Datos del cliente
+        pdf.seccion_datos_cliente(
+            nombre_vecino, num_abonado, categoria, direccion,
+            num_medidor, fecha_emi)
+
+        # 4 — Lecturas (solo si tiene medidor con datos)
+        if lectura_datos and act > 0:
+            pdf.seccion_lecturas(ant, act, cons, exc)
+
+        # 5 — Conceptos
+        pdf.seccion_conceptos(
+            tarifa_basica=tarifa_basica,
+            cargo_consumo=cargo_consumo,
+            mora=mora_display,
+            otros=otros_cargos)
+
+        # 6 — Pie de factura
+        pdf.seccion_footer(
+            mes=mes,
+            anio=anio,
+            m3_incluidos=m3_inc,
+            monto_mes=monto_mes + mora_display,
+            total_deudas=total_deudas,
+            mora_si_vence=mora_si_vence)
+
+        # 7 — Sello PAGADO si aplica
+        if es_pagado:
+            pdf.sello_pagado()
+
+        pdf.output(ruta_salida)
+        return ruta_salida
+
+    except Exception as e:
+        logger.registrar("whatsapp_pdf.py", "_generar_factura", e)
+        return ""
 
 
 # =============================================================================
-# API PÚBLICA — generar_pdf_recibo (comprobante de pago)
+# API PÚBLICA — generar_pdf_recibo  (comprobante de PAGO)
 # =============================================================================
 
 def generar_pdf_recibo(
     nombre_vecino: str,
     meses_pagados: list,
-    total_pagado: float,
-    cajero: str,
-    cargos_extra: list = None,
+    total_pagado:  float,
+    cajero:        str,
+    cargos_extra:  list = None,
     lectura_datos: dict = None,
-    num_abonado: str = "",
-    categoria: str = "Residencial",
-    direccion: str = "",
-    num_medidor: str = "",
-    zona: str = "",
+    num_abonado:   str  = "",
+    categoria:     str  = "Residencial",
+    direccion:     str  = "",
+    num_medidor:   str  = "",
+    zona:          str  = "",
 ) -> str:
-    """
-    Genera el PDF del comprobante de PAGO realizado.
-    meses_pagados: lista de dicts {mes_anio, monto, monto_orig, parcial}
-    lectura_datos: {anterior, actual, consumo, excedente, monto_excedente, monto}
-    """
+    """Genera el PDF del comprobante de PAGO realizado."""
     try:
         from herramientas.db import incrementar_num_factura, obtener_config
         ruta_dir = _ruta_recibos()
         os.makedirs(ruta_dir, exist_ok=True)
 
-        fecha_actual   = datetime.datetime.now()
-        num_factura    = incrementar_num_factura()
-        nombre_seguro  = _sanitizar_nombre(nombre_vecino)
-        nombre_archivo = os.path.join(
-            ruta_dir, f"Factura_{num_factura}_{nombre_seguro}_{fecha_actual.strftime('%Y%m%d%H%M%S')}.pdf"
-        )
+        num_factura   = incrementar_num_factura()
+        ts            = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        nombre_seguro = _sanitizar_nombre(nombre_vecino)
+        ruta_salida   = os.path.join(
+            ruta_dir, f"Factura_{num_factura}_{nombre_seguro}_{ts}.pdf")
 
         # Extraer mes/anio del primer item pagado
         primer = meses_pagados[0] if meses_pagados else {}
         partes = primer.get("mes_anio", "").rsplit(" ", 1)
         mes    = partes[0] if partes else ""
-        anio   = int(partes[1]) if len(partes) > 1 and partes[1].isdigit() else fecha_actual.year
+        anio   = int(partes[1]) if len(partes) > 1 and partes[1].isdigit() \
+                 else datetime.date.today().year
         tarifa = float(obtener_config("tarifa_basica", "5.00") or 5.0)
 
-        # Convertir lectura_datos de cobros.py al formato de la factura
-        lec_fmt = None
+        # Normalizar lectura_datos
+        lec = None
         if lectura_datos:
-            lec_fmt = {
+            lec = {
                 "anterior":        lectura_datos.get("lectura_anterior", 0),
                 "actual":          lectura_datos.get("lectura_actual",   0),
                 "consumo":         lectura_datos.get("consumo_m3",       0),
                 "excedente":       lectura_datos.get("excedente_m3",     0),
                 "monto_excedente": lectura_datos.get("monto_excedente",  0),
-                "monto":           lectura_datos.get("monto_total", tarifa),
+                "monto":           lectura_datos.get("monto_total",      tarifa),
             }
 
-        pdf = _construir_pdf_factura(
+        return _generar_factura(
             nombre_vecino=nombre_vecino,
             num_abonado=num_abonado,
             categoria=categoria,
             direccion=direccion,
             num_medidor=num_medidor,
-            zona=zona,
             mes=mes,
             anio=anio,
             tarifa_basica=tarifa,
-            lectura_datos=lec_fmt,
+            lectura_datos=lec,
             deudas_pendientes=[],
             cargos_extra=cargos_extra or [],
-            mora=0.0,
+            mora_auto=0.0,
             es_pagado=True,
             num_factura=num_factura,
-            cajero=cajero,
+            ruta_salida=ruta_salida,
         )
-
-        pdf.output(nombre_archivo)
-        return nombre_archivo
-
     except Exception as e:
         logger.registrar("whatsapp_pdf.py", "generar_pdf_recibo", e)
         return ""
 
 
 # =============================================================================
-# API PÚBLICA — generar_pdf_recibo_pendiente (para envío masivo)
+# API PÚBLICA — generar_pdf_recibo_pendiente  (para envío masivo)
 # =============================================================================
 
 def generar_pdf_recibo_pendiente(
-    nombre_vecino: str,
-    mes: str,
-    anio: int,
-    monto_cuota: float,
+    nombre_vecino:     str,
+    mes:               str,
+    anio:              int,
+    monto_cuota:       float,
     deudas_pendientes: list,
-    total: float,
-    numero_recibo: str,
-    lectura_datos: dict = None,
-    num_abonado: str = "",
-    categoria: str = "Residencial",
-    direccion: str = "",
-    num_medidor: str = "",
-    zona: str = "",
+    total:             float,
+    numero_recibo:     str,
+    lectura_datos:     dict = None,
+    num_abonado:       str  = "",
+    categoria:         str  = "Residencial",
+    direccion:         str  = "",
+    num_medidor:       str  = "",
+    zona:              str  = "",
 ) -> str:
-    """
-    Genera PDF de recibo a cobrar (pendiente de pago). Para envío masivo.
-    lectura_datos: {anterior, actual, consumo, excedente, monto_excedente, monto}
-    """
+    """Genera el PDF del recibo pendiente de pago (para envío masivo)."""
     try:
         from herramientas.db import incrementar_num_factura, obtener_config
         ruta_dir = _ruta_recibos()
         os.makedirs(ruta_dir, exist_ok=True)
 
-        num_factura    = incrementar_num_factura()
-        nombre_seguro  = _sanitizar_nombre(nombre_vecino)
-        nombre_archivo = os.path.join(
-            ruta_dir, f"Recibo_{num_factura}_{nombre_seguro}_{numero_recibo}.pdf"
-        )
+        num_factura   = incrementar_num_factura()
+        nombre_seguro = _sanitizar_nombre(nombre_vecino)
+        ruta_salida   = os.path.join(
+            ruta_dir, f"Recibo_{num_factura}_{nombre_seguro}_{numero_recibo}.pdf")
         tarifa = float(obtener_config("tarifa_basica", "5.00") or 5.0)
 
-        # Formatear lectura_datos si viene del envío
-        lec_fmt = None
+        # Normalizar lectura_datos (viene de envio_recibos con keys distintos)
+        lec = None
         if lectura_datos:
-            lec_fmt = {
+            lec = {
                 "anterior":        lectura_datos.get("anterior",        0),
                 "actual":          lectura_datos.get("actual",          0),
                 "consumo":         lectura_datos.get("consumo",         0),
-                "excedente":       lectura_datos.get("excedente",       lectura_datos.get("excedente_m3", 0)),
+                "excedente":       lectura_datos.get("excedente",       0),
                 "monto_excedente": lectura_datos.get("monto_excedente", 0),
                 "monto":           lectura_datos.get("monto",           monto_cuota),
             }
 
-        pdf = _construir_pdf_factura(
+        return _generar_factura(
             nombre_vecino=nombre_vecino,
             num_abonado=num_abonado,
             categoria=categoria,
             direccion=direccion,
             num_medidor=num_medidor,
-            zona=zona,
             mes=mes,
             anio=anio,
             tarifa_basica=monto_cuota,
-            lectura_datos=lec_fmt,
-            deudas_pendientes=deudas_pendientes,
+            lectura_datos=lec,
+            deudas_pendientes=deudas_pendientes or [],
             cargos_extra=[],
-            mora=0.0,
+            mora_auto=0.0,
             es_pagado=False,
             num_factura=num_factura,
-            cajero="Sistema",
+            ruta_salida=ruta_salida,
         )
-
-        pdf.output(nombre_archivo)
-        return nombre_archivo
-
     except Exception as e:
         logger.registrar("whatsapp_pdf.py", "generar_pdf_recibo_pendiente", e)
         return ""
@@ -468,16 +620,15 @@ def generar_pdf_recibo_pendiente(
 # =============================================================================
 
 def abrir_whatsapp(telefono: str, mensaje: str) -> bool:
-    """Abre WhatsApp Web con el número y mensaje prellenado."""
     if not telefono:
         return False
     try:
-        numero_limpio = "".join(filter(str.isdigit, str(telefono)))
-        if len(numero_limpio) == 8:
-            numero_limpio = "503" + numero_limpio
-        elif len(numero_limpio) == 0:
+        numero = "".join(filter(str.isdigit, str(telefono)))
+        if len(numero) == 8:
+            numero = "503" + numero
+        elif not numero:
             return False
-        url = f"https://wa.me/{numero_limpio}?text={urllib.parse.quote(mensaje)}"
+        url = f"https://wa.me/{numero}?text={urllib.parse.quote(mensaje)}"
         webbrowser.open(url)
         return True
     except Exception as e:
@@ -488,18 +639,15 @@ def abrir_whatsapp(telefono: str, mensaje: str) -> bool:
 def construir_mensaje_recibo_pago(
     nombre_vecino: str,
     meses_pagados: list,
-    total_pagado: float,
-    cajero: str,
-    numero_recibo: str
+    total_pagado:  float,
+    cajero:        str,
+    numero_recibo: str,
 ) -> str:
-    """Construye el mensaje de WhatsApp para comprobante de pago."""
     comunidad = _nombre_comunidad()
     fecha_str = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
     detalle   = "\n".join(
-        f"💧 {item.get('mes_anio', str(item))}"
-        if isinstance(item, dict) else f"💧 {item}"
-        for item in meses_pagados
-    )
+        f"💧 {i.get('mes_anio', str(i))}" if isinstance(i, dict) else f"💧 {i}"
+        for i in meses_pagados)
     return (
         f"*{comunidad}*\n"
         f"✅ *Comprobante de Pago*\n\n"
@@ -514,23 +662,21 @@ def construir_mensaje_recibo_pago(
 
 
 def construir_mensaje_recibo_pendiente(
-    nombre_vecino: str,
-    mes: str,
-    anio: int,
-    monto_cuota: float,
+    nombre_vecino:     str,
+    mes:               str,
+    anio:              int,
+    monto_cuota:       float,
     deudas_pendientes: list,
-    total: float,
-    numero_recibo: str
+    total:             float,
+    numero_recibo:     str,
 ) -> str:
-    """Construye el mensaje de WhatsApp para recibo de cobro pendiente."""
-    comunidad  = _nombre_comunidad()
-    fecha_lim  = _fecha_limite_str(anio, mes)
-    deuda_txt  = ""
+    comunidad = _nombre_comunidad()
+    _, fecha_lim = _fecha_limite_str(anio, mes)
+    deuda_txt   = ""
     if deudas_pendientes:
-        lineas = "\n".join(
+        lineas    = "\n".join(
             f"   ⚠️ {d['mes']} {d['anio']}: ${d['monto']:.2f}"
-            for d in deudas_pendientes
-        )
+            for d in deudas_pendientes)
         deuda_txt = f"\n\n*Meses pendientes:*\n{lineas}"
     return (
         f"*{comunidad}*\n"
@@ -540,19 +686,18 @@ def construir_mensaje_recibo_pendiente(
         f"💧 Cuota del mes: ${monto_cuota:.2f}"
         f"{deuda_txt}\n\n"
         f"💰 *Total a cancelar: ${total:.2f}*\n"
-        f"📅 Fecha límite: {fecha_lim}\n\n"
-        f"Por favor acérquese a realizar su pago o comuníquese con su cobrador.\n"
+        f"📅 Fecha limite: {fecha_lim}\n\n"
+        f"Por favor acerquese a realizar su pago o comuniquese con su cobrador.\n"
         f"Adjunto su comprobante en PDF."
     )
 
 
 def construir_mensaje_cierre_caja(
-    fecha: str,
-    total: float,
+    fecha:    str,
+    total:    float,
     cantidad: int,
-    cajero: str
+    cajero:   str,
 ) -> str:
-    """Mensaje de WhatsApp para notificación de cierre de caja al presidente."""
     comunidad = _nombre_comunidad()
     return (
         f"*{comunidad}*\n"
@@ -560,24 +705,20 @@ def construir_mensaje_cierre_caja(
         f"💰 Total recaudado: *${total:.2f}*\n"
         f"📊 Transacciones: {cantidad}\n"
         f"👤 Cajero: {cajero}\n\n"
-        f"Adjunto el reporte PDF detallado del día."
+        f"Adjunto el reporte PDF detallado del dia."
     )
 
 
 # =============================================================================
-# PDF REPORTE DE RECAUDACIÓN (sin cambios de diseño)
+# PDF REPORTE DE RECAUDACIÓN (sin cambio de diseño)
 # =============================================================================
 
 def generar_pdf_reporte(
-    datos: list,
-    total: float,
-    titulo: str,
-    cierre_de_caja: bool = False
+    datos:         list,
+    total:         float,
+    titulo:        str,
+    cierre_de_caja: bool = False,
 ) -> str:
-    """
-    Genera el PDF del reporte de recaudación.
-    datos: lista de tuplas (fecha, hora, vecino, mes_p, anio_p, monto, cajero)
-    """
     try:
         ruta_dir = _ruta_reportes_pdf()
         os.makedirs(ruta_dir, exist_ok=True)
@@ -586,18 +727,16 @@ def generar_pdf_reporte(
         titulo_s  = _sanitizar_nombre(titulo)
         nombre    = os.path.join(ruta_dir, f"Reporte_{titulo_s}_{ts}.pdf")
         comunidad = _nombre_comunidad()
-        titulo_pdf = (
-            f"{comunidad} - CIERRE DE CAJA"
-            if cierre_de_caja else
-            f"{comunidad} - Reporte de Recaudación"
-        )
+        titulo_pdf = (f"{comunidad} - CIERRE DE CAJA"
+                      if cierre_de_caja
+                      else f"{comunidad} - Reporte de Recaudacion")
 
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", "B", 16)
         pdf.cell(0, 10, _lat1(titulo_pdf), ln=True, align="C")
         pdf.set_font("Arial", "I", 12)
-        pdf.cell(0, 8, _lat1(f"Período: {titulo}"), ln=True, align="C")
+        pdf.cell(0, 8, _lat1(f"Periodo: {titulo}"), ln=True, align="C")
         pdf.line(10, pdf.get_y(), 200, pdf.get_y())
         pdf.ln(6)
 
@@ -621,7 +760,6 @@ def generar_pdf_reporte(
 
         pdf.output(nombre)
         return nombre
-
     except Exception as e:
         logger.registrar("whatsapp_pdf.py", "generar_pdf_reporte", e)
         return ""
@@ -633,11 +771,6 @@ def generar_pdf_reporte(
 
 def generar_pdf_lecturas(datos: list, mes: str, anio: int,
                           anomalias: set = None) -> str:
-    """
-    Genera PDF del reporte de lecturas del período.
-    datos: lista de dicts de obtener_lecturas_periodo()
-    anomalias: set de vecino_ids con consumo anómalo
-    """
     try:
         ruta_dir = _ruta_reportes_pdf()
         os.makedirs(ruta_dir, exist_ok=True)
@@ -650,16 +783,15 @@ def generar_pdf_lecturas(datos: list, mes: str, anio: int,
         pdf = FPDF(orientation="L")
         pdf.add_page()
         pdf.set_font("Arial", "B", 14)
-        pdf.cell(0, 10, _lat1(f"{comunidad} — Lecturas de Medidor"), ln=True, align="C")
+        pdf.cell(0, 10, _lat1(f"{comunidad} - Lecturas de Medidor"), ln=True, align="C")
         pdf.set_font("Arial", "I", 11)
-        pdf.cell(0, 7, _lat1(f"Período: {mes} {anio}"), ln=True, align="C")
+        pdf.cell(0, 7, _lat1(f"Periodo: {mes} {anio}"), ln=True, align="C")
         pdf.line(10, pdf.get_y(), 287, pdf.get_y())
         pdf.ln(4)
 
-        # Encabezados
         cols = [("Abonado", 20), ("Nombre", 55), ("Medidor", 25),
                 ("Zona", 35), ("Lect. Ant.", 25), ("Lect. Act.", 25),
-                ("Consumo m³", 28), ("Excedente", 25), ("Monto", 22), ("Estado", 25)]
+                ("Consumo m3", 28), ("Excedente", 25), ("Monto", 22), ("Estado", 25)]
         pdf.set_font("Arial", "B", 8)
         pdf.set_fill_color(26, 54, 93)
         pdf.set_text_color(255, 255, 255)
@@ -670,52 +802,47 @@ def generar_pdf_lecturas(datos: list, mes: str, anio: int,
 
         pdf.set_font("Arial", "", 8)
         for d in datos:
-            es_anomalia = d["vecino_id"] in anomalias
-            if es_anomalia:
+            anom = d["vecino_id"] in anomalias
+            if anom:
                 pdf.set_fill_color(255, 235, 235)
             else:
                 pdf.set_fill_color(255, 255, 255)
-
-            fill = es_anomalia
+            fill = anom
             pdf.cell(20, 6, _lat1(d["num_abonado"] or "—"), border=1, fill=fill)
             pdf.cell(55, 6, _lat1((d["nombre"] or "")[:28]), border=1, fill=fill)
             pdf.cell(25, 6, _lat1(d["num_medidor"] or "—"), border=1, fill=fill)
             pdf.cell(35, 6, _lat1((d["zona"] or "—")[:18]), border=1, fill=fill)
-
             if d["tiene_lectura"]:
                 pdf.cell(25, 6, f"{d['lectura_anterior']:.1f}", border=1, align="R", fill=fill)
                 pdf.cell(25, 6, f"{d['lectura_actual']:.1f}",  border=1, align="R", fill=fill)
                 pdf.cell(28, 6, f"{d['consumo_m3']:.1f}",      border=1, align="R", fill=fill)
                 pdf.cell(25, 6, f"{d['excedente_m3']:.1f}",    border=1, align="R", fill=fill)
                 pdf.cell(22, 6, f"${d['monto_total']:.2f}",    border=1, align="R", fill=fill)
-                estado = "⚠ ANOMALÍA" if es_anomalia else "OK"
-                color_e = (196, 48, 48) if es_anomalia else (47, 133, 90)
-                pdf.set_text_color(*color_e)
+                estado = "ANOMALIA" if anom else "OK"
+                cr = (196, 48, 48) if anom else (47, 133, 90)
+                pdf.set_text_color(*cr)
                 pdf.cell(25, 6, _lat1(estado), border=1, align="C", fill=fill)
                 pdf.set_text_color(0, 0, 0)
             else:
-                for _ in range(5):
-                    pdf.cell(25 if _ < 4 else 22, 6, "—", border=1, align="C", fill=fill)
+                for cw in [25, 25, 28, 25, 22]:
+                    pdf.cell(cw, 6, "—", border=1, align="C", fill=fill)
                 pdf.set_text_color(196, 48, 48)
                 pdf.cell(25, 6, _lat1("PENDIENTE"), border=1, align="C", fill=fill)
                 pdf.set_text_color(0, 0, 0)
             pdf.ln()
 
-        # Resumen al pie
         pdf.ln(4)
-        total_registradas = sum(1 for d in datos if d["tiene_lectura"])
-        pendientes_c      = len(datos) - total_registradas
-        anomalias_c       = len(anomalias)
+        total_reg  = sum(1 for d in datos if d["tiene_lectura"])
+        pendientes = len(datos) - total_reg
         pdf.set_font("Arial", "B", 9)
         pdf.cell(0, 6, _lat1(
-            f"Total vecinos con medidor: {len(datos)}  |  "
-            f"Lecturas registradas: {total_registradas}  |  "
-            f"Pendientes: {pendientes_c}  |  Anomalías: {anomalias_c}"
-        ), ln=True)
+            f"Total medidores: {len(datos)}  |  "
+            f"Registradas: {total_reg}  |  "
+            f"Pendientes: {pendientes}  |  "
+            f"Anomalias: {len(anomalias)}"), ln=True)
 
         pdf.output(nombre)
         return nombre
-
     except Exception as e:
         logger.registrar("whatsapp_pdf.py", "generar_pdf_lecturas", e)
         return ""

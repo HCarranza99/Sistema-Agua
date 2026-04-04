@@ -7,7 +7,9 @@ from herramientas.db import (
 )
 from herramientas.seguridad import cifrar_texto, descifrar_texto
 from herramientas.email_sender import probar_conexion_smtp
-from pantallas.componentes import topbar, separador
+from pantallas.componentes import (
+    topbar, separador, aplicar_validacion_decimal, aplicar_validacion_entero
+)
 from config import (
     COLOR_FONDO, COLOR_BLANCO, COLOR_BORDE, COLOR_AZUL_MARINO,
     COLOR_VERDE_PAGO, COLOR_ROJO, COLOR_AMARILLO, COLOR_TEXTO,
@@ -44,7 +46,7 @@ def _ruta_campo(parent, label, clave_config, defecto):
     """Campo de ruta con botón Examinar y botón Abrir."""
     ctk.CTkLabel(parent, text=label, font=FONT_LABEL,
                  text_color=COLOR_TEXTO).pack(anchor="w", pady=(10, 2))
-    fila = ctk.CTkFrame(parent, fg_color="transparent")
+    fila = ctk.CTkFrame(parent, fg_color=COLOR_BLANCO)
     fila.pack(fill="x", pady=(0, 2))
 
     valor_actual = obtener_config(clave_config, defecto)
@@ -105,11 +107,11 @@ def crear_pantalla(parent_frame):
                  font=FONT_SMALL, text_color=COLOR_TEXTO_MUTED).pack(anchor="w")
 
     # ── Contenido scrollable ───────────────────────────────────────────────────
-    scroll = ctk.CTkScrollableFrame(frame, fg_color="transparent")
+    scroll = ctk.CTkScrollableFrame(frame, fg_color=COLOR_FONDO)
     scroll.pack(fill="both", expand=True, padx=24, pady=16)
 
     # Fila superior: dos columnas
-    row_top = ctk.CTkFrame(scroll, fg_color="transparent")
+    row_top = ctk.CTkFrame(scroll, fg_color=COLOR_FONDO)
     row_top.pack(fill="x", pady=(0, 8))
 
     col_izq = ctk.CTkFrame(row_top, fg_color=COLOR_BLANCO, corner_radius=10)
@@ -118,10 +120,10 @@ def crear_pantalla(parent_frame):
     col_der = ctk.CTkFrame(row_top, fg_color=COLOR_BLANCO, corner_radius=10)
     col_der.pack(side="right", fill="both", expand=True)
 
-    pad = ctk.CTkFrame(col_izq, fg_color="transparent")
+    pad = ctk.CTkFrame(col_izq, fg_color=COLOR_BLANCO)
     pad.pack(fill="both", expand=True, padx=20, pady=16)
 
-    pad_der = ctk.CTkFrame(col_der, fg_color="transparent")
+    pad_der = ctk.CTkFrame(col_der, fg_color=COLOR_BLANCO)
     pad_der.pack(fill="both", expand=True, padx=20, pady=16)
 
     # ── COLUMNA IZQUIERDA ──────────────────────────────────────────────────────
@@ -160,7 +162,7 @@ def crear_pantalla(parent_frame):
                  font=FONT_SMALL, text_color=COLOR_TEXTO_MUTED,
                  justify="left").pack(anchor="w", pady=(0, 6))
 
-    fila_logo = ctk.CTkFrame(pad, fg_color="transparent")
+    fila_logo = ctk.CTkFrame(pad, fg_color=COLOR_BLANCO)
     fila_logo.pack(fill="x", pady=(0, 4))
     e_logo = ctk.CTkEntry(fila_logo, height=40, corner_radius=8, fg_color=COLOR_FONDO,
                            placeholder_text="Ruta al archivo de imagen...")
@@ -211,6 +213,7 @@ def crear_pantalla(parent_frame):
                           obtener_config("smtp_host", "smtp.gmail.com"))
     e_smtp_puerto = _campo(pad_der, "Puerto SMTP", "587",
                             obtener_config("smtp_puerto", "587"))
+    aplicar_validacion_entero(e_smtp_puerto)
     e_smtp_usuario = _campo(pad_der, "Usuario (correo remitente)",
                              "tucorreo@gmail.com",
                              obtener_config("smtp_usuario", ""))
@@ -251,14 +254,17 @@ def crear_pantalla(parent_frame):
 
     e_tarifa = _campo(pad_der, "Tarifa básica mensual ($)",
                        "5.00", obtener_config("tarifa_basica", "5.00"))
+    aplicar_validacion_decimal(e_tarifa)
     e_m3 = _campo(pad_der, "M³ incluidos en tarifa básica",
                    "25", obtener_config("m3_incluidos", "25"))
+    aplicar_validacion_decimal(e_m3)
     e_fecha_limite = _campo(pad_der, "Día límite de pago (1–31)",
                              "25", obtener_config("fecha_limite_pago", "25"))
+    aplicar_validacion_entero(e_fecha_limite)
 
     ctk.CTkLabel(pad_der, text="Recargo por mora automático",
                  font=FONT_LABEL, text_color=COLOR_TEXTO).pack(anchor="w", pady=(10, 2))
-    mora_row = ctk.CTkFrame(pad_der, fg_color="transparent")
+    mora_row = ctk.CTkFrame(pad_der, fg_color=COLOR_BLANCO)
     mora_row.pack(fill="x", pady=(0, 2))
     mora_tipo_var = ctk.StringVar(
         value=obtener_config("mora_tipo", "fijo"))
@@ -275,6 +281,7 @@ def crear_pantalla(parent_frame):
     mora_val_actual = obtener_config("mora_valor", "1.00")
     if mora_val_actual:
         e_mora_valor.insert(0, mora_val_actual)
+    aplicar_validacion_decimal(e_mora_valor)
     ctk.CTkLabel(mora_row, text="$ / %", font=FONT_SMALL,
                  text_color=COLOR_TEXTO_MUTED).pack(side="left", padx=4)
 
@@ -287,11 +294,14 @@ def crear_pantalla(parent_frame):
 
     e_num_inicial = _campo(pad_der, "Número de factura inicial",
                             "1", obtener_config("num_factura_inicial", "1"))
+    aplicar_validacion_entero(e_num_inicial)
     e_num_actual  = _campo(pad_der, "Número actual (próxima factura)",
                             "1", obtener_config("num_factura_actual",
                                                 obtener_config("num_factura_inicial", "1")))
+    aplicar_validacion_entero(e_num_actual)
     e_dia_gen = _campo(pad_der, "Día del mes para generar recibos (1–31)",
                         "1", obtener_config("dia_generacion_recibos", "1"))
+    aplicar_validacion_entero(e_dia_gen)
 
     # ── ID del cliente / Hardware ─────────────────────────────────────────────
     _seccion(pad_der, "Información de licencia")
@@ -327,7 +337,7 @@ def crear_pantalla(parent_frame):
     # ── SECCIÓN COMPLETA: Rangos de excedente ─────────────────────────────────
     rangos_card = ctk.CTkFrame(scroll, fg_color=COLOR_BLANCO, corner_radius=10)
     rangos_card.pack(fill="x", pady=(0, 8))
-    pad_rangos = ctk.CTkFrame(rangos_card, fg_color="transparent")
+    pad_rangos = ctk.CTkFrame(rangos_card, fg_color=COLOR_BLANCO)
     pad_rangos.pack(fill="both", expand=True, padx=20, pady=16)
 
     ctk.CTkLabel(pad_rangos, text="Rangos de excedente (tarifas escalonadas)",
@@ -350,7 +360,7 @@ def crear_pantalla(parent_frame):
                      ).pack(side="left", padx=(8 if txt == "Desde m³" else 4, 0))
 
     # Contenedor dinámico de filas
-    filas_rangos = ctk.CTkFrame(pad_rangos, fg_color="transparent")
+    filas_rangos = ctk.CTkFrame(pad_rangos, fg_color=COLOR_BLANCO)
     filas_rangos.pack(fill="x", pady=(4, 8))
 
     _rangos_entries = []  # list of dicts: {desde, hasta, precio, desc, frame}
@@ -393,6 +403,10 @@ def crear_pantalla(parent_frame):
         e_precio.pack(side="left", padx=(0, 4))
         e_desc.pack(side="left",   fill="x", expand=True, padx=(0, 4))
 
+        aplicar_validacion_decimal(e_desde)
+        aplicar_validacion_decimal(e_hasta)
+        aplicar_validacion_decimal(e_precio)
+
         if desde:  e_desde.insert(0, desde)
         if hasta:  e_hasta.insert(0, hasta)
         if precio: e_precio.insert(0, precio)
@@ -412,7 +426,7 @@ def crear_pantalla(parent_frame):
                        command=_eliminar).pack(side="right", padx=6)
 
     # Botón agregar fila
-    btns_rangos = ctk.CTkFrame(pad_rangos, fg_color="transparent")
+    btns_rangos = ctk.CTkFrame(pad_rangos, fg_color=COLOR_BLANCO)
     btns_rangos.pack(fill="x", pady=(0, 4))
     ctk.CTkButton(btns_rangos, text="+ Agregar tramo", height=34, width=150,
                    corner_radius=8, fg_color=COLOR_AZUL_MARINO,

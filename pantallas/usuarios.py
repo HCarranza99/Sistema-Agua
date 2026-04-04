@@ -384,6 +384,7 @@ def crear_pantalla(parent_frame, get_usuario_actual_id, get_usuario_actual_rol):
                         "telefono": tel, "email": email
                     }: abrir_formulario(d)
                 ).pack(side="right", padx=4)
+        lista_scroll.update_idletasks()
 
-    actualizar_tabla()
+    frame.after(0, actualizar_tabla)
     return frame

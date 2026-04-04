@@ -4,7 +4,8 @@ from tkinter import messagebox
 import herramientas.logger as logger
 from herramientas.db import obtener_conexion
 from pantallas.componentes import (
-    topbar, badge, encabezado_tabla, mensaje_vacio
+    topbar, badge, encabezado_tabla, mensaje_vacio,
+    aplicar_validacion_entero
 )
 from config import (
     COLOR_FONDO, COLOR_BLANCO, COLOR_BORDE, COLOR_AZUL_MARINO,
@@ -133,6 +134,7 @@ def crear_pantalla(parent_frame):
         modal_inner, placeholder_text="0",
         height=40, corner_radius=8, fg_color=COLOR_FONDO)
     entry_orden.pack(fill="x", padx=16, pady=(0, 2))
+    aplicar_validacion_entero(entry_orden)
     ctk.CTkLabel(modal_inner,
                  text="Número menor aparece primero en las listas.",
                  font=("Arial", 10, "italic"),
@@ -285,7 +287,8 @@ def crear_pantalla(parent_frame):
                     "orden": orden, "activa": activa
                 }: abrir_formulario(d)
             ).pack(side="right", padx=12)
+        lista_scroll.update_idletasks()
 
-    actualizar_tabla()
+    frame.after(0, actualizar_tabla)
     _refrescar_topbar()
     return frame

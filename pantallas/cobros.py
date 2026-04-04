@@ -8,7 +8,8 @@ from herramientas.email_sender import enviar_correo_async, construir_cuerpo_reci
 from herramientas.db import obtener_conexion, obtener_config
 from licencia.bloqueador import verificar_accion
 from pantallas.componentes import (
-    topbar, stat_card, badge, encabezado_tabla, mensaje_vacio
+    topbar, stat_card, badge, encabezado_tabla, mensaje_vacio,
+    aplicar_validacion_decimal
 )
 from config import (
     COLOR_FONDO, COLOR_BLANCO, COLOR_BORDE, COLOR_AZUL_MARINO,
@@ -365,6 +366,7 @@ def crear_pantalla(parent_frame, get_usuario_actual_id, get_usuario_actual_rol):
         for r_id, mes, anio, monto, epago in recibos:
             _renderizar_fila_recibo(r_id, mes, anio, monto, epago, v_id)
 
+        marco_tabla.update_idletasks()
         recalcular_total()
 
     def _renderizar_fila_recibo(r_id, mes, anio, monto, epago, v_id):
@@ -525,12 +527,14 @@ def crear_pantalla(parent_frame, get_usuario_actual_id, get_usuario_actual_rol):
             entry_m3 = ctk.CTkEntry(fila_consumo, width=70, height=36,
                                     corner_radius=8, fg_color=COLOR_BLANCO)
             entry_m3.pack(side="left", padx=6)
+            aplicar_validacion_decimal(entry_m3)
             ctk.CTkLabel(fila_consumo, text="Tarifa/m³: $", font=FONT_LABEL,
                          text_color=COLOR_TEXTO).pack(side="left", padx=(8, 0))
             entry_tarifa = ctk.CTkEntry(fila_consumo, width=70, height=36,
                                         corner_radius=8, fg_color=COLOR_BLANCO)
             entry_tarifa.pack(side="left", padx=6)
             entry_tarifa.insert(0, "0.50")
+            aplicar_validacion_decimal(entry_tarifa)
             lbl_calc = ctk.CTkLabel(frame_m, text="= $0.00", font=FONT_SMALL,
                                     text_color=COLOR_TEXTO_MUTED)
             lbl_calc.pack(anchor="e", padx=20)
@@ -553,6 +557,7 @@ def crear_pantalla(parent_frame, get_usuario_actual_id, get_usuario_actual_rol):
                                        height=36, corner_radius=8,
                                        fg_color=COLOR_BLANCO)
             entry_monto.pack(fill="x", padx=16)
+            aplicar_validacion_decimal(entry_monto)
 
         def agregar_cargo():
             desc = entry_desc.get().strip() or desc_default

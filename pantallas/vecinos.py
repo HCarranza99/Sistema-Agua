@@ -11,7 +11,8 @@ from herramientas.permisos import puede_gestionar_vecinos
 from licencia.bloqueador import verificar_accion
 from pantallas.componentes import (
     topbar, badge, encabezado_tabla, mensaje_vacio,
-    separador, boton_primario, boton_secundario
+    separador, boton_primario, boton_secundario,
+    aplicar_validacion_decimal
 )
 from config import (
     COLOR_FONDO, COLOR_BLANCO, COLOR_BORDE, COLOR_AZUL_MARINO,
@@ -401,6 +402,7 @@ def crear_pantalla(parent_frame, get_rol_actual):
                                 height=40, corner_radius=8, fg_color=COLOR_FONDO)
     entry_cuota.pack(fill="x", padx=16, pady=(0, 2))
     entry_cuota.insert(0, "5.00")
+    aplicar_validacion_decimal(entry_cuota)
 
     # Campos exclusivos para vecinos con medidor
     frame_medidor_extra = ctk.CTkFrame(modal_inner, fg_color="#F5F3FF", corner_radius=8)
@@ -417,6 +419,7 @@ def crear_pantalla(parent_frame, get_rol_actual):
     entry_lect_inicial = ctk.CTkEntry(frame_medidor_extra, placeholder_text="Ej: 4410",
                                        height=40, corner_radius=8, fg_color=COLOR_FONDO)
     entry_lect_inicial.pack(fill="x", padx=12, pady=(0, 4))
+    aplicar_validacion_decimal(entry_lect_inicial)
     ctk.CTkLabel(frame_medidor_extra,
                  text="Esta será la lectura de referencia para el primer cobro.",
                  font=("Arial", 10, "italic"), text_color=COLOR_TEXTO_MUTED).pack(
@@ -692,8 +695,9 @@ def crear_pantalla(parent_frame, get_rol_actual):
                         "tipo_cobro": tipo_cobro, "lectura_inicial": lect_ini
                     }: abrir_formulario(d)
                 ).pack(side="right", padx=12)
+        lista_scroll.update_idletasks()
 
-    actualizar_tabla()
+    frame.after(0, actualizar_tabla)
     _refrescar_topbar()
     frame.after(100, _actualizar_btn_nuevo)
     return frame

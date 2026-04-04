@@ -570,6 +570,7 @@ def crear_pantalla(parent_frame, get_usuario_rol, get_usuario_id=None):
                                    _ced=ce_desc:
                         _reimprimir(_tid, _vn, _mp, _ap, _mo, _cet, _ced)
                 ).pack(side="right", padx=(0, 4))
+        marco_tabla.update_idletasks()
 
     # ── Anulación de cobro ────────────────────────────────────────────────────
     def _confirmar_anulacion(t_id, recibo_id, cargo_id, v_id,
@@ -1139,6 +1140,7 @@ def crear_pantalla_lecturas(parent_frame, get_usuario_rol):
                 badge(fila, "Pendiente",
                       COLOR_BADGE_AMBER_BG, COLOR_BADGE_AMBER_TEXT,
                       width=98).pack(side="left", padx=4)
+        marco.update_idletasks()
 
     frame.after(200, cargar_lecturas)
     return frame

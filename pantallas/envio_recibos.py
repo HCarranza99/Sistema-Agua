@@ -13,7 +13,8 @@ from herramientas.db import (
 )
 from licencia.bloqueador import verificar_accion
 from pantallas.componentes import (
-    topbar, badge, encabezado_tabla, mensaje_vacio
+    topbar, badge, encabezado_tabla, mensaje_vacio,
+    aplicar_validacion_decimal
 )
 from config import (
     COLOR_FONDO, COLOR_BLANCO, COLOR_BORDE, COLOR_AZUL_MARINO,
@@ -413,6 +414,7 @@ def crear_pantalla(parent_frame, get_usuario_id, get_usuario_nombre):
                                         corner_radius=6, fg_color=COLOR_BLANCO,
                                         placeholder_text="m³")
                 e_actual.pack(side="left", padx=4)
+                aplicar_validacion_decimal(e_actual)
 
                 lbl_calc_lectura = ctk.CTkLabel(col_lectura, text="",
                                                 font=("Arial", 10), text_color=COLOR_AMARILLO,
@@ -552,6 +554,7 @@ def crear_pantalla(parent_frame, get_usuario_id, get_usuario_nombre):
                     text_color=txt_em, font=FONT_SMALL,
                     command=_check_y_enviar_email
                 ).pack(side="left")
+        lista_scroll.update_idletasks()
 
     # ── Envío WhatsApp ─────────────────────────────────────────────────────────
     def _enviar_whatsapp(v_id, nombre, telefono, email, cuota, deudas, lectura_datos):

@@ -145,3 +145,25 @@ def boton_secundario(parent, texto: str, comando,
         border_width=1, border_color=COLOR_BORDE,
         font=FONT_BTN_SM
     )
+
+
+def aplicar_validacion_decimal(entry: ctk.CTkEntry) -> None:
+    """Restringe un CTkEntry para aceptar solo números decimales no negativos."""
+    def _validar(P):
+        if P == "" or P == ".":
+            return True
+        try:
+            float(P)
+            return P.count('.') <= 1
+        except ValueError:
+            return False
+    vcmd = (entry._entry.register(_validar), '%P')
+    entry._entry.configure(validate="key", validatecommand=vcmd)
+
+
+def aplicar_validacion_entero(entry: ctk.CTkEntry) -> None:
+    """Restringe un CTkEntry para aceptar solo dígitos (entero no negativo)."""
+    def _validar(P):
+        return P == "" or P.isdigit()
+    vcmd = (entry._entry.register(_validar), '%P')
+    entry._entry.configure(validate="key", validatecommand=vcmd)

@@ -197,16 +197,28 @@ def inicializar_base_datos() -> bool:
 
 
 def _migrar_columnas(cur: sqlite3.Cursor) -> None:
-    """Agrega columnas nuevas a tablas existentes sin perder datos."""
+    """
+    Agrega columnas nuevas a tablas existentes sin perder datos.
+    Lista acumulativa: cada entrada es idempotente (se ignora si ya existe).
+    """
     migraciones = [
-        ("vecinos",      "email",   "TEXT"),
-        ("vecinos",      "zona_id", "INTEGER REFERENCES zonas(id) ON DELETE SET NULL"),
-        ("transacciones","cargo_id",       "INTEGER REFERENCES cargos_extra(id)"),
-        ("transacciones","anulado",         "INTEGER DEFAULT 0"),
-        ("transacciones","motivo_anulacion","TEXT"),
-        ("transacciones","fecha_anulacion", "DATETIME"),
-        ("usuarios",     "telefono","TEXT"),
-        ("usuarios",     "email",   "TEXT"),
+        # ── vecinos ────────────────────────────────────────────────────────────
+        ("vecinos", "email",          "TEXT"),
+        ("vecinos", "zona_id",        "INTEGER REFERENCES zonas(id) ON DELETE SET NULL"),
+        ("vecinos", "num_abonado",    "TEXT"),
+        ("vecinos", "num_medidor",    "TEXT"),
+        ("vecinos", "direccion",      "TEXT"),
+        ("vecinos", "categoria",      "TEXT DEFAULT 'Residencial'"),
+        ("vecinos", "tipo_cobro",     "TEXT DEFAULT 'fijo'"),
+        ("vecinos", "lectura_inicial","REAL DEFAULT 0"),
+        # ── transacciones ──────────────────────────────────────────────────────
+        ("transacciones", "cargo_id",        "INTEGER REFERENCES cargos_extra(id)"),
+        ("transacciones", "anulado",          "INTEGER DEFAULT 0"),
+        ("transacciones", "motivo_anulacion", "TEXT"),
+        ("transacciones", "fecha_anulacion",  "DATETIME"),
+        # ── usuarios ───────────────────────────────────────────────────────────
+        ("usuarios", "telefono", "TEXT"),
+        ("usuarios", "email",    "TEXT"),
     ]
     for tabla, columna, tipo in migraciones:
         try:

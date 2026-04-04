@@ -139,6 +139,7 @@ def mostrar_pantalla(nombre):
         f.pack_forget()
     if nombre in frames_pantallas:
         frames_pantallas[nombre].pack(fill="both", expand=True)
+        ventana.update_idletasks()
     activar_nav(nombre)
 
 
@@ -323,25 +324,31 @@ def verificar_login(event=None):
         sesion["usuario_nombre"] = resultado[2]
 
         lbl_error.configure(text="")
-        cargar_pantallas()
-        construir_nav()
-        construir_footer_sidebar()
 
-        # Actualizar nombre de organización en sidebar
-        nombre_org = obtener_config("nombre_comunidad", "Sistema de Agua")
-        lbl_nombre_org.configure(text=nombre_org)
-
+        # Mostrar el dashboard primero para que la transición sea inmediata
         frame_login.pack_forget()
         frame_dashboard.pack(fill="both", expand=True)
+        ventana.update_idletasks()
 
-        # Generar recibos del mes actual para todos los vecinos activos
-        # (idempotente: no crea duplicados si ya existen)
-        generar_recibos_mes_actual()
+        def _post_login():
+            cargar_pantallas()
+            construir_nav()
+            construir_footer_sidebar()
 
-        # Banner de suscripción
-        _actualizar_banner()
+            # Actualizar nombre de organización en sidebar
+            nombre_org = obtener_config("nombre_comunidad", "Sistema de Agua")
+            lbl_nombre_org.configure(text=nombre_org)
 
-        mostrar_pantalla("cobros")
+            # Generar recibos del mes actual para todos los vecinos activos
+            # (idempotente: no crea duplicados si ya existen)
+            generar_recibos_mes_actual()
+
+            # Banner de suscripción
+            _actualizar_banner()
+
+            mostrar_pantalla("cobros")
+
+        ventana.after(0, _post_login)
     else:
         lbl_error.configure(text="Usuario o contraseña incorrectos.")
         entrada_password.delete(0, "end")
